@@ -1,0 +1,39 @@
+# The brain itself — big, machine-specific, and regenerable from the sweep.
+# Back it up by copying the file; do not commit it.
+brain.db
+brain.db-wal
+brain.db-shm
+
+# Generated
+digests/*.md
+logs/
+workspace/
+inbox/
+*.log
+
+# Keep the directories themselves so a fresh clone has the right shape.
+!digests/.gitkeep
+!logs/.gitkeep
+!workspace/.gitkeep
+!inbox/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Models downloaded by sentence-transformers
+.cache/
+models/
+
+# OS
+.DS_Store
+Thumbs.db

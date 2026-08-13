@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the NeoBrain sweep daily
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+# Laptops sleep. Persistent=true runs the missed sweep on wake instead of
+# silently skipping the day, which is what plain cron does.
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

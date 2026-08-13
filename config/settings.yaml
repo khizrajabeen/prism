@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# System settings. You will touch this far less often than interests.yaml.
+# Anything omitted falls back to neobrain/config.py:DEFAULT_SETTINGS.
+# ---------------------------------------------------------------------------
+
+embeddings:
+  # "none"                  → keyword (BM25) retrieval only. Start here.
+  #                           It is genuinely good on this literature: gene
+  #                           symbols, HLA alleles and tool names are rare
+  #                           tokens that BM25 handles better than vectors.
+  # "sentence-transformers" → local model, no network after first download.
+  #                           pip install sentence-transformers
+  # "ollama"                → a local Ollama server (e.g. nomic-embed-text)
+  backend: none
+  model: sentence-transformers/all-MiniLM-L6-v2
+  # For real work consider a domain model:
+  #   pritamdeka/S-PubMedBert-MS-MARCO   (biomedical, 768d)
+  #   BAAI/bge-base-en-v1.5              (strong general retrieval)
+  ollama_url: http://localhost:11434
+  batch_size: 32
+  chunk_chars: 1400
+  chunk_overlap: 200
+
+retrieval:
+  k: 12               # passages returned per query
+  rrf_k: 60           # reciprocal-rank-fusion damping; higher = flatter blend
+  keyword_weight: 1.0
+  vector_weight: 1.0
+  snippet_chars: 420
+
+sweep:
+  sources: [europepmc, clinicaltrials, preprints]
+  max_per_query: 300
+  polite_delay: 0.34   # seconds between calls to the same host — do not lower
+  timeout: 30
+  fetch_fulltext: true
+  fulltext_top_n: 15      # OA full texts to pull per sweep
+  fulltext_min_score: 8   # only for papers worth the bandwidth
+
+digest:
+  max_per_bucket: 15
+  include_below_threshold_count: true
+
+memory:
+  # The drift guard. Leave this on. An agent that can silently rewrite its own
+  # beliefs will eventually tell you something wrong with total confidence and
+  # no trail back to where it came from.
+  require_approval_for_writes: true
+  core_soft_token_cap: 2000
+  belief_review_days: 120
+
+tutor:
+  new_cards_per_day: 8
+  max_reviews_per_day: 60
+
+network:
+  # Advisory list — `neobrain doctor` prints it, and docs/SECURITY.md explains
+  # how to enforce it at the OS/firewall level if you want a hard boundary.
+  allow:
+    - www.ebi.ac.uk
+    - europepmc.org
+    - eutils.ncbi.nlm.nih.gov
+    - clinicaltrials.gov
+    - api.biorxiv.org
+    - api.crossref.org
+    - api.openalex.org

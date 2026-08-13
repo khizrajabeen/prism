@@ -1,0 +1,13 @@
+[Unit]
+Description=NeoBrain literature sweep
+Documentation=file:%h/neobrain/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/neobrain
+Environment=NEOBRAIN_HOME=%h/neobrain
+ExecStart=%h/neobrain/.venv/bin/neobrain sweep
+# The sweep is polite by design; give it room rather than killing it mid-run.
+TimeoutStartSec=3600

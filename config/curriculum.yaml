@@ -1,0 +1,241 @@
+# ---------------------------------------------------------------------------
+# The curriculum — an ordered path from immunology fundamentals to running your
+# own neoantigen pipeline and designing the experiments that test it.
+#
+# Each module names the knowledge file it teaches from, the outcomes you should
+# be able to demonstrate, and a checkpoint that is a TASK, not a quiz question.
+# Reading a module is not learning it. Producing the artifact is.
+#
+#   neobrain teach 03          → build a grounded teaching packet for module 3
+#   neobrain progress          → where you are
+#   neobrain quiz              → spaced repetition on the facts
+# ---------------------------------------------------------------------------
+
+modules:
+  - id: "01"
+    title: "Antigen presentation, from first principles"
+    topic: immunology_basics
+    level: foundation
+    goal: >
+      Be able to predict, for a given mutation, whether it could ever be seen by
+      a T cell — and say which step would kill it if not.
+    reads: [immunology_foundations.md]
+    outcomes:
+      - "Trace a cytosolic protein to a peptide-MHC complex on the cell surface, naming every step."
+      - "Explain why class I and class II sample different protein pools, and what that means for CD4 vs CD8 responses."
+      - "Explain why most predicted binders are never presented."
+    checkpoint: >
+      Take any missense mutation in a gene you care about. Write out, in order,
+      every biological step between the DNA change and a CD8 T cell seeing it,
+      and mark the three steps most likely to fail.
+    cards:
+      - q: "Which proteins does MHC class I sample, and which does class II sample?"
+        a: "Class I samples the cytosolic/endogenous proteome via the proteasome and TAP — so it reports what the cell is making, including mutated self. Class II samples the endosomal/exogenous compartment loaded after invariant-chain removal and HLA-DM editing — so it mostly reports what an APC has taken up from outside. This is why class I drives CD8 killing of the tumor cell itself, while class II drives CD4 help against material cross-presented or engulfed by APCs."
+      - q: "What is cross-presentation and why does it matter for cancer vaccines?"
+        a: "Cross-presentation is an APC (chiefly cDC1) loading exogenous antigen onto MHC class I, which is how a vaccinated peptide or mRNA-derived protein primes CD8 T cells even though the tumor cell itself was never the APC. It matters because vaccines do not deliver antigen into the tumor cell's own class I pathway — priming depends on this route, and on cDC1 being present and licensed."
+      - q: "Typical peptide length range for MHC class I vs class II binding?"
+        a: "Class I: 8–11 residues, closed groove, anchored at both ends (9-mers dominate). Class II: 13–25 residues, open-ended groove with a 9-residue binding core plus flanking residues, which is why register prediction is ambiguous and class II predictors are weaker."
+      - q: "What is the difference between binding, presentation, and immunogenicity?"
+        a: "Binding = the peptide has affinity for the MHC groove (measurable in vitro). Presentation = the peptide is actually processed, transported, loaded, and displayed on the cell surface (observable by immunopeptidomics). Immunogenicity = a T cell with a matching TCR exists in the repertoire, escapes tolerance, and is activated by it. Each step loses an order of magnitude; predictors are strongest at the first and weakest at the last."
+
+  - id: "02"
+    title: "From tumor sequence to candidate neoantigens"
+    topic: pipeline
+    level: core
+    goal: >
+      Run and defend a complete variant-to-candidate pipeline, and know which
+      of its filters throws away real biology.
+    reads: [neoantigen_pipeline.md, bioinformatics_stack.md]
+    outcomes:
+      - "Justify tumor–normal WES + RNA-seq as the minimum viable input."
+      - "Name a caller, an HLA typer, and a predictor for each step and say why."
+      - "State the expected attrition at each stage in orders of magnitude."
+    checkpoint: >
+      Run pVACseq (or the pipeline in bioinformatics_stack.md) end-to-end on a
+      public test VCF. Produce a ranked candidate table and write one paragraph
+      on which candidates you would drop and why.
+    cards:
+      - q: "Why is RNA-seq of the same tumor not optional in a neoantigen pipeline?"
+        a: "Because a mutation in DNA that is not expressed produces no protein, no peptide, and no neoantigen. RNA-seq confirms the mutant allele is transcribed (and at what level), and expression filtering removes a large fraction of DNA-predicted candidates. It also catches allele-specific expression, where the mutant allele is silenced."
+      - q: "Why are frameshift indels disproportionately immunogenic per mutation?"
+        a: "A frameshift generates a long stretch of entirely novel, non-self amino acid sequence downstream of the indel, rather than the single-residue change of a missense mutation. That yields many candidate epitopes per event, with no central-tolerance history — which is a large part of why MSI-high tumors respond well to checkpoint blockade."
+      - q: "What resolution of HLA typing does a neoantigen pipeline need, and why?"
+        a: "Four-digit (e.g. HLA-A*02:01, not HLA-A2) minimum, because peptide-binding specificity differs between alleles within the same serological group — A*02:01 and A*02:06 have measurably different motifs. Class II typing is harder and less accurate than class I; know the error bars on your DRB1/DQ calls."
+
+  - id: "03"
+    title: "Ranking: the part that is genuinely unsolved"
+    topic: ranking
+    level: core
+    goal: >
+      Explain why predicted binders vastly outnumber real neoantigens, and
+      build a defensible ranking rather than sorting by predicted affinity.
+    reads: [neoantigen_pipeline.md, benchmarks_and_validation.md]
+    outcomes:
+      - "Describe the features that add signal beyond MHC binding affinity."
+      - "Explain agretopicity, foreignness, and clonality, and when each misleads."
+      - "Interpret a TESLA-style benchmark honestly."
+    checkpoint: >
+      Take a ranked candidate list and re-rank it with expression, clonality
+      (CCF), and agretopicity. Write down which candidates moved, and what
+      experiment would tell you whether the new order is better.
+    cards:
+      - q: "What is differential agretopicity (DAI) and what does it capture?"
+        a: "The difference in predicted MHC binding between the mutant peptide and its wild-type counterpart. A large DAI means the mutation created binding that did not exist before — so the T cell repertoire against it was never subject to central tolerance against a presented self version. Low DAI means the WT peptide was likely already presented, and the responding repertoire may be tolerized."
+      - q: "Why does clonality (cancer cell fraction) matter more than raw VAF for target selection?"
+        a: "A clonal neoantigen is present in every tumor cell, so a successful response can clear the whole tumor; a subclonal one is present in a fraction, so killing produces partial responses and selects for the escape population. VAF conflates clonality with purity and copy number — CCF corrects for both."
+      - q: "Roughly what fraction of predicted strong binders elicit a detectable T cell response?"
+        a: "Single-digit percent, and often lower depending on the validation assay's sensitivity. Order of magnitude: hundreds to thousands of predicted binders per tumor, tens taken forward, a handful with confirmed reactivity. Quote the specific benchmark you are using rather than a remembered number — this is exactly the kind of figure that should carry a citation."
+
+  - id: "04"
+    title: "Proving it in vitro"
+    topic: in_vitro
+    level: core
+    goal: >
+      Choose the right assay for the question, and design the controls that
+      make a positive result mean something.
+    reads: [preclinical_models.md, protocols_in_vitro.md]
+    outcomes:
+      - "Pick between ELISpot, ICS, AIM, tetramer, and cytotoxicity for a given claim."
+      - "Design the control set that distinguishes a neoantigen response from background."
+      - "Explain why a peptide-pool positive is not an epitope identification."
+    checkpoint: >
+      Write a full ELISpot plate layout for testing 20 candidate peptides in one
+      patient's PBMC, including every control, and justify the well count.
+    cards:
+      - q: "What is the single most important control in a neoantigen T cell assay?"
+        a: "The wild-type counterpart peptide, run alongside the mutant. A neoantigen response is only meaningful relative to the WT sequence — a response to both is a response to a self epitope, not to the mutation. Also required: irrelevant-peptide negative, DMSO vehicle-only, and a positive control (CEF/CEFT pool or PHA/anti-CD3)."
+      - q: "When should you use AIM (activation-induced markers) instead of IFN-γ ELISpot?"
+        a: "When you are looking for CD4 responses, or for T cells that are antigen-specific but not IFN-γ-producing (Th2/Th17/Tfh phenotypes, or exhausted cells). AIM reads out CD137/OX40/CD69 upregulation independently of cytokine secretion, which ELISpot systematically underdetects for CD4."
+      - q: "Why can a positive peptide-pool result not be reported as identifying an epitope?"
+        a: "Because the response could come from any peptide in the pool, and pools also produce competition artifacts at the MHC and cross-reactive signals. A pool positive is a screening hit that must be deconvoluted into individual peptides before any epitope claim is made."
+
+  - id: "05"
+    title: "Mouse models: choosing one that can answer your question"
+    topic: in_vivo
+    level: core
+    goal: >
+      Choose a model whose failure modes you can name, and design a study that
+      would detect your own effect if it were real — and reject it if not.
+    reads: [preclinical_models.md, experimental_design.md]
+    outcomes:
+      - "Match a syngeneic line to a question, and state its dominant confound."
+      - "Explain why prophylactic protection routinely oversells a vaccine."
+      - "Power a survival study rather than guessing n."
+    checkpoint: >
+      Write a full study design for a therapeutic neoantigen vaccine in MC38:
+      groups, n with a power calculation, randomization point, endpoints,
+      depletion arms, and the rechallenge plan.
+    cards:
+      - q: "Why is a prophylactic vaccine result weak evidence for therapeutic efficacy?"
+        a: "Prophylactic vaccination primes a full, unexhausted repertoire against a tumor that does not yet exist — no established immunosuppressive microenvironment, no antigen loss, no exhaustion, minimal burden. Therapeutic vaccination must work against all of those. Protection in the prophylactic setting is routine and translates poorly; the therapeutic setting is what predicts clinical behaviour."
+      - q: "What is the specific confound when using CT26 for neoantigen vaccine studies?"
+        a: "CT26 carries the endogenous retroviral antigen gp70/AH1, which drives a dominant immune response that can swamp and mask any neoantigen-specific signal. If you do not measure and control for AH1 reactivity, you may be reading an AH1 response as a vaccine effect."
+      - q: "At what point should mice be randomized into treatment groups, and why?"
+        a: "When tumors reach a defined, measurable volume — not at implantation. Randomizing at implantation lets differential engraftment produce baseline imbalance between groups, and the difference you then measure is partly a difference in starting tumor size. Randomize on tumor volume, blind the measurer, and predefine humane endpoints."
+
+  - id: "06"
+    title: "Delivery platforms and formulation"
+    topic: platforms
+    level: applied
+    goal: >
+      Say what a platform choice actually buys you, and what it costs in
+      manufacturing time, immunogenicity, and trial design.
+    reads: [delivery_platforms.md]
+    outcomes:
+      - "Compare mRNA-LNP, synthetic long peptide, DC, and viral vector on real axes."
+      - "Explain adjuvant selection as an immunological choice, not a formulation detail."
+      - "Reason about epitope ordering and junctional epitopes in concatemers."
+    checkpoint: >
+      Design a 20-epitope construct: choose the platform, order the epitopes,
+      justify the linkers, and state how you would check for junctional
+      neoepitopes.
+    cards:
+      - q: "What is a junctional neoepitope and why does it matter in a concatemer?"
+        a: "When epitopes are strung together in one construct, the sequence spanning a junction between two epitopes can itself form a novel peptide that binds MHC — an artifact epitope present in neither the tumor nor the patient. It wastes immune response on a target no tumor cell displays. Tools like pVACvector order epitopes and insert linkers specifically to minimize predicted junctional binders."
+      - q: "Why is poly-ICLC a common adjuvant for peptide cancer vaccines?"
+        a: "It is a TLR3/MDA5 agonist that drives type I interferon and licenses cDC1 for cross-presentation — the exact pathway needed to prime CD8 responses against a peptide that would otherwise be presented tolerogenically. Adjuvant choice is a choice about which innate pathway you engage, not a formulation afterthought."
+
+  - id: "07"
+    title: "Reading the clinical evidence honestly"
+    topic: clinical
+    level: applied
+    goal: >
+      Judge a neoantigen vaccine trial on its design, not its press release.
+    reads: [clinical_landscape.md, experimental_design.md]
+    outcomes:
+      - "Identify the endpoint, the control arm, and the multiplicity problem."
+      - "Distinguish immunogenicity from clinical benefit."
+      - "Explain why the sickest patients are the ones vaccines help least."
+    checkpoint: >
+      Take any published neoantigen vaccine trial. Write half a page on what it
+      does and does not establish, naming the specific design feature behind
+      each limitation.
+    cards:
+      - q: "Why is an immunogenicity endpoint not evidence of clinical benefit?"
+        a: "Detecting vaccine-induced T cells shows the vaccine did something immunologically. Clinical benefit requires those T cells to traffic to the tumor, survive the microenvironment, recognize antigen actually presented on tumor cells, and kill enough of them to change an outcome. Every one of those steps fails routinely, which is why immunogenicity rates far exceed response rates."
+      - q: "What is the structural problem with vaccinating patients with high tumor burden?"
+        a: "The patients most in need are the ones with the most immunosuppressive microenvironments, the most exhausted repertoires, and the least time — vaccines need weeks to months to prime a response. This is why the field has moved toward the adjuvant/minimal-residual-disease setting, where burden is low and time exists, and why most programs combine with checkpoint blockade."
+
+  - id: "08"
+    title: "Escape, resistance, and what happens after the response"
+    topic: resistance
+    level: advanced
+    goal: >
+      Predict how a tumor will escape a given vaccine, and design against it.
+    reads: [resistance_and_escape.md]
+    outcomes:
+      - "Name the major escape routes and the assay that detects each."
+      - "Explain HLA LOH and B2M loss as antigen-presentation failures."
+      - "Design a multi-epitope strategy that is robust to single-target loss."
+    checkpoint: >
+      For a tumor that progressed after a vaccine-induced response, write the
+      differential diagnosis of escape mechanisms and the specific assay you
+      would run to distinguish them.
+    cards:
+      - q: "What does B2M loss do to antigen presentation, and what does it imply for therapy?"
+        a: "β2-microglobulin is required to assemble every MHC class I molecule, so its loss abolishes class I surface presentation entirely — no CD8 target, regardless of which neoantigens the tumor carries. It implies vaccine and TCR-based approaches will fail, and pushes toward NK-engaging strategies (which the same loss can sensitize the tumor to) or CD4/class II-directed approaches."
+      - q: "What is HLA loss of heterozygosity and why is it more insidious than B2M loss?"
+        a: "The tumor loses one HLA haplotype while keeping the other, so class I presentation continues — it just stops presenting anything restricted to the lost alleles. It is invisible to any assay that only checks whether MHC-I is present, and it means neoantigens selected against the patient's germline HLA type may be silently untargetable. Detect it with LOHHLA-style allele-specific copy number analysis, not by staining for MHC-I."
+
+  - id: "09"
+    title: "Computation: doing it yourself"
+    topic: coding
+    level: applied
+    goal: >
+      Write, run, and version the analysis rather than describing it.
+    reads: [bioinformatics_stack.md, coding_practices.md]
+    outcomes:
+      - "Set up a reproducible environment and a workflow that reruns cleanly."
+      - "Write analysis code that someone else can rerun a year later."
+      - "Know when to use a workflow manager and when a script is honest enough."
+    checkpoint: >
+      Take one analysis you have already done ad hoc and make it reproducible:
+      pinned environment, one entry-point command, and a tested function at the
+      core of it.
+    cards:
+      - q: "What is the minimum for an analysis to count as reproducible?"
+        a: "A pinned environment (conda/uv lockfile or container), the exact input data with a checksum or accession, a single documented entry-point command that regenerates every figure from raw input, and version control with the analysis code committed at the state that produced the result. If any of those is missing, you cannot reproduce your own result in six months, let alone anyone else's."
+      - q: "When is a workflow manager (Nextflow/Snakemake) worth the overhead over a shell script?"
+        a: "When the pipeline has branching dependencies, needs to resume after a failure without redoing everything, runs across many samples in parallel, or has to run on a cluster. For a single linear analysis on one sample, a well-written script with `set -euo pipefail` is more honest and easier to debug — the workflow manager's value is restart, parallelism, and provenance, not virtue."
+
+  - id: "10"
+    title: "Designing a study someone will believe"
+    topic: design
+    level: advanced
+    goal: >
+      Design experiments whose negative results are informative and whose
+      positive results survive scrutiny.
+    reads: [experimental_design.md, benchmarks_and_validation.md]
+    outcomes:
+      - "Power a study before running it, and state the effect size you can detect."
+      - "Pre-specify analysis to avoid the multiplicity trap this field is full of."
+      - "Build in the control that would falsify your own hypothesis."
+    checkpoint: >
+      Write a one-page pre-registration for your next experiment: hypothesis,
+      primary endpoint, n and power, analysis plan, and the result that would
+      make you abandon the hypothesis.
+    cards:
+      - q: "What question does a power calculation actually answer?"
+        a: "Given an effect size you would care about, how many samples do you need for a specified probability (usually 80%) of detecting it at your chosen significance level. Run backwards — as post-hoc power on an observed effect — it is uninformative and misleading. The useful discipline is stating the smallest effect worth detecting *before* the experiment, because that is a scientific judgement, not a statistical one."
+      - q: "Why is the multiplicity problem especially severe in neoantigen work?"
+        a: "You test hundreds of candidate peptides per patient, across multiple assays, multiple time points, and multiple patients. Uncorrected, positives are guaranteed by chance alone. The field's usual defences — pre-specifying the candidate list, correcting across peptides, and requiring confirmation in an independent assay or replicate — are what separate a real epitope identification from a well-presented false positive."

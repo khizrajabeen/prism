@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Edit the two absolute paths below to match your install, then:
+    cp scripts/launchd/com.neobrain.sweep.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.neobrain.sweep.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.neobrain.sweep</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/CHANGEME/neobrain/.venv/bin/neobrain</string>
+        <string>sweep</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NEOBRAIN_HOME</key>
+        <string>/Users/CHANGEME/neobrain</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/CHANGEME/neobrain</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>6</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <!-- Run on wake if the machine was asleep at 06:00. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/CHANGEME/neobrain/logs/sweep.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/CHANGEME/neobrain/logs/sweep.err</string>
+</dict>
+</plist>

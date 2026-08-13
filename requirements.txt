@@ -1,0 +1,21 @@
+# Core — everything in NeoBrain works with just these two.
+requests>=2.31
+PyYAML>=6.0
+
+# --- Optional, and genuinely optional -------------------------------------
+# Faster vector search (brute-force cosine works without it, just slower):
+# numpy>=1.26
+#
+# Local embeddings for hybrid retrieval. Start without this — keyword search
+# over this literature is strong, because gene symbols, HLA alleles and tool
+# names are exactly the rare tokens BM25 handles well.
+# sentence-transformers>=3.0
+#
+# PDF ingestion, for the paywalled papers you open through your library proxy:
+# pypdf>=4.0
+#
+# MCP server, so any agent client gets the brain as tools:
+# mcp[cli]>=1.2
+#
+# Tests:
+# pytest>=8.0

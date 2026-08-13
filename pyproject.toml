@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neobrain"
+version = "1.0.0"
+description = "A local research brain for neoantigen cancer vaccines and drug discovery"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=3.0", "numpy>=1.26"]
+pdf = ["pypdf>=4.0"]
+mcp = ["mcp[cli]>=1.2"]
+dev = ["pytest>=8.0"]
+all = [
+    "sentence-transformers>=3.0",
+    "numpy>=1.26",
+    "pypdf>=4.0",
+    "mcp[cli]>=1.2",
+    "pytest>=8.0",
+]
+
+[project.scripts]
+neobrain = "neobrain.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["neobrain*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

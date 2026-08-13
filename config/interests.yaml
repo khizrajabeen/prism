@@ -1,0 +1,156 @@
+# ---------------------------------------------------------------------------
+# Interest profile — the single file you tune most often.
+#
+# Every query runs against Europe PMC (journals + preprints, one syntax).
+# The sweep reads this at runtime; no code changes needed. Edit it weekly at
+# first, then monthly once the digest stops surfacing things you skip.
+#
+# Query syntax notes:
+#   "quoted phrase"     exact phrase
+#   AND / OR / NOT      boolean (uppercase)
+#   TITLE:"..."         restrict to title
+#   AUTH:"Surname F"    author
+#   *                   truncation, e.g. immunopeptidom*
+# ---------------------------------------------------------------------------
+
+lookback_days: 7
+
+queries:
+  # ---------------------------------------------------------------- core
+  core:
+    - 'neoantigen AND (vaccine OR immunogenicity)'
+    - '"personalized cancer vaccine" OR "personalised cancer vaccine"'
+    - '"individualized neoantigen therapy" OR "individualised neoantigen therapy"'
+    - '"neoantigen prediction" OR "neoepitope prediction"'
+    - '"tumor mutational burden" AND neoantigen'
+    - '"shared neoantigen" OR "public neoantigen" OR "off-the-shelf neoantigen"'
+    - 'KRAS AND (G12D OR G12V OR G12C) AND (vaccine OR "T cell" OR TCR)'
+    - '"TP53" AND (hotspot OR "R175H") AND (neoantigen OR TCR)'
+    - 'frameshift AND (neoantigen OR immunogenic) AND (MSI OR "microsatellite")'
+
+  # ------------------------------------------------ prediction & modelling
+  prediction_methods:
+    - 'MHC AND ("binding prediction" OR "presentation prediction")'
+    - 'NetMHCpan OR NetMHCIIpan OR MHCflurry OR BigMHC OR TransPHLA OR MixMHCpred'
+    - 'immunopeptidom* OR "HLA ligandome" OR "eluted ligand"'
+    - '"TCR specificity" AND (prediction OR model OR benchmark)'
+    - '"antigen processing" AND (proteasome OR TAP) AND prediction'
+    - '"protein language model" AND (immunology OR epitope OR MHC)'
+    - 'AlphaFold AND (pMHC OR "peptide-MHC" OR TCR)'
+    - '"agretopicity" OR "foreignness score" OR "differential agretopicity"'
+
+  # ------------------------------------------------------------ platforms
+  platforms:
+    - '"mRNA vaccine" AND (tumor OR cancer) AND (neoantigen OR neoepitope)'
+    - '"peptide vaccine" AND (adjuvant OR "poly-ICLC" OR montanide)'
+    - '"dendritic cell vaccine" AND neoantigen'
+    - '"lipid nanoparticle" AND (mRNA OR vaccine) AND tumor'
+    - '"viral vector" AND (ChAdOx OR MVA OR adenovirus) AND cancer AND vaccine'
+    - '"self-amplifying RNA" AND (cancer OR tumor)'
+    - '"circular RNA" AND vaccine AND tumor'
+
+  # ---------------------------------------------------------- preclinical
+  preclinical:
+    - '(MC38 OR B16F10 OR CT26 OR 4T1 OR LLC1) AND (neoantigen OR vaccine)'
+    - '"humanized mouse" AND (HLA OR "T cell") AND tumor'
+    - '"HLA transgenic" AND mouse AND (epitope OR vaccine)'
+    - '"syngeneic model" AND immunotherapy'
+    - 'ELISpot AND (neoantigen OR neoepitope)'
+    - '"tetramer" AND (neoantigen OR "tumor-specific") AND "T cell"'
+    - '"organoid" AND (immune OR "T cell") AND (tumor OR cancer)'
+    - '"patient-derived xenograft" AND (immune OR humanized)'
+
+  # ------------------------------------------------------------- clinical
+  clinical:
+    - 'neoantigen AND (trial OR "phase 1" OR "phase 2") AND (melanoma OR pancreatic OR lung OR glioblastoma)'
+    - '"minimal residual disease" AND (ctDNA OR "circulating tumor DNA") AND vaccine'
+    - 'vaccine AND "checkpoint blockade" AND (combination OR "combined with")'
+    - '"adoptive cell therapy" AND (neoantigen OR "tumor infiltrating lymphocyte")'
+    - '"TCR-T" AND (KRAS OR TP53 OR neoantigen)'
+
+  # ------------------------------------- resistance, escape, and the hard parts
+  resistance:
+    - '"immune evasion" AND (B2M OR "HLA loss" OR "loss of heterozygosity")'
+    - '"antigen loss" OR "immunoediting" AND tumor'
+    - '"tumor microenvironment" AND (suppressi* OR exclusion) AND "T cell"'
+    - '"clonal" AND "subclonal" AND neoantigen'
+    - '"central tolerance" AND (neoantigen OR "self peptide") AND repertoire'
+
+  # ------------------------------------------------ computational methods you run
+  tooling:
+    - 'pVACtools OR pVACseq OR NeoPredPipe OR "antigen.garnish" OR OpenVax'
+    - '(Mutect2 OR Strelka2 OR "somatic variant calling") AND benchmark'
+    - '(OptiType OR arcasHLA OR "HLA-HD" OR Polysolver) AND (typing OR benchmark)'
+    - '"single-cell" AND "TCR sequencing" AND (clonotype OR expansion) AND tumor'
+    - '"spatial transcriptomics" AND (tumor OR immune) AND (method OR benchmark)'
+
+# ---------------------------------------------------------------------------
+# Scoring. Weights are additive; a term in the TITLE counts double.
+# See neobrain/scoring.py for the structural bonuses layered on top.
+# `neobrain score "some title" --abstract "..."` explains any single decision.
+# ---------------------------------------------------------------------------
+boost_terms:
+  neoantigen: 5
+  neoepitope: 5
+  immunopeptidom: 4
+  "clinical trial": 4
+  "phase 1": 3
+  "phase 2": 3
+  "phase 3": 4
+  immunogenicity: 3
+  "MHC class II": 3
+  "class II": 2
+  MC38: 3
+  "humanized mouse": 3
+  benchmark: 3
+  "personalized": 2
+  KRAS: 2
+  TP53: 2
+  ELISpot: 2
+  tetramer: 2
+  "single-cell": 2
+  TCR: 2
+  mRNA: 2
+  "lipid nanoparticle": 2
+  "checkpoint": 1
+  "tumor microenvironment": 1
+  frameshift: 2
+  "splice variant": 2
+  "gene fusion": 2
+  "HLA loss": 3
+  "antigen presentation": 2
+  organoid: 2
+
+penalty_terms:
+  "systematic review": -2
+  "narrative review": -3
+  editorial: -5
+  "case report": -3
+  "letter to the editor": -5
+  erratum: -8
+  "study protocol": -1
+
+# Papers scoring below this are stored and searchable, but stay out of the
+# digest. Raise it if the digest gets noisy; lower it if you feel you are
+# missing things. Do not set it so high that you only ever see what you expect.
+score_threshold: 6
+
+# Terms used to filter the raw bioRxiv/medRxiv firehose (which has no
+# server-side search). Defaults to your boost terms weighted >= 3.
+preprint_filter_terms:
+  - neoantigen
+  - neoepitope
+  - immunopeptidom
+  - "MHC class"
+  - "HLA ligand"
+  - "cancer vaccine"
+  - "T cell receptor specificity"
+
+# ClinicalTrials.gov v2 sweep
+trial_terms:
+  - neoantigen vaccine
+  - personalized cancer vaccine
+  - individualized neoantigen therapy
+  - shared neoantigen
+  - KRAS vaccine
+  - mRNA cancer vaccine
