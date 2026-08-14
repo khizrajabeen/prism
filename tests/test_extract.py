@@ -5,7 +5,6 @@ every value carries the sentence it came from, and a missing value is reported
 as "not reported" rather than as an empty cell.
 """
 
-import pytest
 
 from neobrain import extract, science
 

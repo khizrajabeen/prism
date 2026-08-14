@@ -692,7 +692,7 @@ def brief(
 
     cards_due = s["cards_due"]
     if cards_due:
-        parts += [f"## Teaching", "", f"{cards_due} review cards are due (`neobrain quiz`).", ""]
+        parts += ["## Teaching", "", f"{cards_due} review cards are due (`neobrain quiz`).", ""]
 
     parts += [
         "---",

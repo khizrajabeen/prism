@@ -2,32 +2,86 @@
 
 A local research brain for **neoantigen cancer vaccines and drug discovery**.
 
-It runs on your machine. It sweeps the literature and trial registries every
-night, stores everything in a database you own, learns what you care about,
-remembers your project across sessions, teaches you the field, and refuses to
-tell you anything it cannot source.
-
-NeoBrain is built around the loop researchers actually run, not around a list
-of features:
+It runs on your machine. It sweeps the literature nightly, holds your
+hypotheses and experiments, checks the sentences in your draft against your own
+library, and refuses to tell you anything it cannot source.
 
 ```
         ┌───────────┐     ┌────────────┐     ┌──────────────┐
         │ QUESTION  │────▶│  EVIDENCE  │────▶│  HYPOTHESIS  │
-        │   Ask     │     │  Library   │     │  (falsifier  │
-        └───────────┘     └────────────┘     │   required)  │
-              ▲                              └──────┬───────┘
-              │                                     │
-      ┌───────┴──────┐    ┌──────────┐    ┌─────────▼────────┐
+        │ Ask/Check │     │  Research  │     │  falsifier   │
+        └───────────┘     └────────────┘     │  required    │
+              ▲                  │           └──────┬───────┘
+              │           routing│                  │
+      ┌───────┴──────┐    ┌──────▼───┐    ┌─────────▼────────┐
       │    BELIEF    │◀───│  RESULT  │◀───│    EXPERIMENT    │
-      │  versioned,  │    │ vs the   │    │ prediction saved │
-      │ never erased │    │prediction│    │ BEFORE it runs   │
+      │  versioned,  │    │  vs the  │    │ prediction saved │
+      │ never erased │    │prediction│    │  before it runs  │
       └──────────────┘    └──────────┘    └──────────────────┘
-             Memory                            Projects
 ```
 
 Every table in the database attaches to a node of that loop. A capability that
-attaches to none of them is a utility, not part of the brain — that is the test
-this design applies to itself.
+attaches to none of them is a utility, not part of the brain.
+
+---
+
+## Where this sits
+
+Three kinds of tool exist near this problem, and each is missing a different half.
+
+|  | Knows the literature | Knows *your* work |
+|---|---|---|
+| **Literature tools** — Elicit, Scite, Consensus, ResearchRabbit, Undermind | ✅ | ❌ |
+| **Electronic lab notebooks** — Benchling, LabArchives, eLabFTW, SciNote | ❌ | ✅ |
+| **AI co-scientists** — Google Co-Scientist, FutureHouse, Sakana | ✅ | ❌ *(its hypotheses, not yours)* |
+| **NeoBrain** | ✅ | ✅ |
+
+ELNs capture what you did with excellent traceability and know nothing about
+what is published. Literature tools rank papers beautifully and have never
+heard of your experiment. AI co-scientists generate hypotheses *for* you —
+which is a different offer from holding *yours* to a falsifier and a
+pre-registered prediction.
+
+The empty quadrant is the product.
+
+### What we do that none of them do
+
+**1. Extraction with sentence-level provenance, and "not reported" as data.**
+Elicit extracts into custom columns with an LLM. Ours is pattern-based: lower
+recall on odd phrasing, zero fabrication, and **every cell opens the sentence
+it came from**. The difference that matters is the empty cell — in an LLM table
+a blank is ambiguous between "the paper did not report it" and "the model
+missed it". Here `not reported` is an explicit value, which turns a column into
+a finding:
+
+> 2 of 3 MC38 vaccine papers do not report a power calculation.
+
+**2. The methods audit.** Every paper scored against what ARRIVE and CONSORT
+have asked for since 2010 — group sizes, randomization, blinding, power,
+controls, named statistical test, ethics — each with the sentence that
+satisfied it. A checklist, deliberately not a score: a score invites ranking
+papers by reporting, which correlates with rigour without being it.
+
+**3. Quality-weighted evidence.** Scite's own documentation concedes that a
+supporting citation "might come from a paper where the experimental evidence is
+weak" — it counts citations knowing nothing about the citing study's design.
+We weight support by `design tier × reporting completeness`, and show both
+components rather than one opaque number. We will never match 1.6B citations;
+we are answering a different question.
+
+**4. Evidence routed to your own hypotheses.**
+
+```
+hypothesis #1: Class II epitopes improve durability of MC38 vaccine responses
+  ← Class II epitopes improve durable responses to MC38 neoantigen vaccination
+    auto-suggested: shares MC38, MHC class II
+```
+
+Structurally unavailable to every tool above, because it needs the work ledger
+in the same database as the corpus.
+
+Full analysis, including the interface principles that follow from it:
+[`docs/DESIGN.md`](docs/DESIGN.md).
 
 ---
 
@@ -39,462 +93,206 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -e .
 
 neobrain init                 # directories, database, starter index
-neobrain doctor               # check the install, see what is optional
-neobrain sweep --days 30      # backfill a month of literature — takes a few minutes
-neobrain digest               # read what it found
-neobrain brief                # exactly what your agent reads at session start
+neobrain doctor               # what is installed, what is optional
+neobrain sweep --days 30      # backfill a month of literature
+neobrain web                  # → http://127.0.0.1:8787
 ```
 
-Then fill in `memory/CORE.md`. Five minutes on that file changes the quality of
-every answer afterwards, because it is the difference between an assistant that
-knows you are a second-year PhD student with no wet lab access and one that
-guesses.
+Then fill in `memory/CORE.md`. Five minutes there changes every answer
+afterwards — it is the difference between an assistant that knows you are a
+second-year PhD student without wet-lab access and one that guesses.
 
-## How it helps, by what you are doing
-
-| You are… | You open | What it does that a search engine does not |
-|---|---|---|
-| **asking a question** | `Ask` | Assembles the passages, grades their evidence tier, states how well your corpus even covers the topic, flags beliefs you already hold that disagree, and exports BibTeX for exactly the sources used |
-| **writing a draft** | `Ask → Check` | Takes a sentence and shows the passages from *your own library* that bear on it, flags quantitative claims with no quantitative source, and tells you plainly when the corpus says nothing |
-| **running a project** | `Projects` | Holds your hypotheses (each with a required falsifier) and experiments (each with the prediction recorded **before** the result), so a surprising result stays surprising |
-| **at the bench** | `Bench` | Mutant peptide windows with WT controls, junctional neoepitopes in a construct, HLA validation, and a model registry that tells you what runs on *this* machine |
-| **in a tumour board** | `Bench → Molecular screen` | ESCAT actionability tiers, HLA-restriction flags, B2M/JAK exclusion signals, and candidate trials — explicitly a search aid, never an eligibility determination |
-| **keeping current** | `Today` | What the *work* needs first, then what needs your decision, then what is new in the literature |
-| **not wanting to forget** | `Memory` | An append-only journal the database refuses to edit, beliefs versioned rather than overwritten, and rules learned from your corrections |
-
-Everything is local, two dependencies (`requests`, `PyYAML`), and it degrades
-gracefully without the optional extras.
-
-## The web portal: six tabs, not eleven
-
-An earlier version had eleven tabs — entity graph, digest, conflicts, review,
-models, quiz, and so on. Each was defensible; together they made no sense,
-because they were named after **mechanisms** rather than after anything a
-researcher sets out to do. Nobody wakes up wanting to use an entity graph.
-
-The redesign is one tab per stage of the loop:
-
-| Tab | Stage | What moved inside it |
-|---|---|---|
-| **Today** | the inbox | overview + digest + the approval and conflict queues |
-| **Ask** | question → answer | answer composer, claim/draft checking, raw evidence packs |
-| **Projects** | hypothesis → experiment → result | *new* — the spine that was missing |
-| **Library** | evidence | search, what's new, the entity graph as a lens |
-| **Bench** | doing the work | peptides, model registry, molecular screen |
-| **Memory** | belief | approvals, conflicts, journal, beliefs, rules, spaced repetition |
-
-The graph did not get deleted — it stopped being a destination and became a
-lens inside Library, which is where you would actually reach for it.
-
-## The dashboard
-
-```bash
-neobrain web          # → http://127.0.0.1:8787
-```
-
-A single-file HTML app served by the standard library. No framework, no CDN,
-no build step, no new dependency — because a research tool you cannot start in
-three years, when the JS ecosystem has moved on, is not a durable one.
-
-Ten views: overview, hybrid search with evidence packs, an interactive entity
-graph, the journal, beliefs with version history, the review queue with diffs,
-conflicts, the model registry, peptide tools, and spaced repetition.
-
-It binds **127.0.0.1** and refuses any other interface unless you pass
-`--allow-remote`. This database holds your unpublished notes and reading
-history; it should not become reachable from café wifi because a default was
-convenient. For remote access, tunnel it:
-
-```bash
-ssh -L 8787:127.0.0.1:8787 you@your-machine
-```
-
-## The bench: models and peptide tools
-
-**What models exist, and can I run them here?**
-
-```bash
-$ neobrain models --recommend structure
-Task: structure
-  Boltz-2 is the practical open default (MIT, joint affinity, strong on
-  antibody-antigen interfaces which most resemble TCR-pMHC)…
-
-→ Boltz-2  (not installed (python:boltz) — pip install boltz)
-  caveat: Affinity prediction is not calibrated for pMHC; use it for ranking,
-          not absolute values.
-```
-
-`config/models.yaml` catalogues ~20 models — NetMHCpan, MHCflurry, BigMHC,
-PRIME, the TCR-specificity family, HERMES, AlphaFold 3, Boltz-2, Chai-1,
-ESM-2/3, Evo 2, SpliceAI, scGPT, Geneformer — each with its licence, hardware
-needs, **and a caveat**. Availability detection is real: it imports the module
-or looks for the binary, so `--available` tells you what actually runs here.
-
-The caveats are the point. A registry that tells you TCR-specificity models
-exist, without telling you their training data is dominated by a handful of
-viral epitopes and that a negative prediction means nothing, is worse than no
-registry.
-
-**Peptide calculations**, the operations *around* the models where a silent
-off-by-one produces a peptide that does not exist:
-
-```bash
-# every mutant peptide, with its wild-type control
-neobrain peptide windows KRAS_SEQ 12 D --wildtype G
-
-# what did my linkers just create?
-$ neobrain peptide junctions SIINFEKL,ASMTNMELM,GILGFVFTL --linker AAY
-90 junction-spanning peptides across 2 junctions
-→ present in the construct and in no tumor cell. Screen them against the
-  patient's HLA — any that bind are response diverted from real targets.
-
-neobrain peptide hla "HLA-A2"      # → rejected: serological, not four-digit
-```
-
-Positions are 1-based, as variants are written. Passing the expected wild-type
-residue catches transcript/isoform mismatches, which otherwise yield confident
-predictions for peptides that were never in the protein.
-
-## Daily use
-
-```bash
-neobrain brief                          # start here, every session
-neobrain ask "does class II inclusion improve vaccine responses?"
-neobrain search "HLA LOH detection" -k 8
-neobrain search --papers "KRAS G12D vaccine"
-neobrain paper MED:39012345 --methods    # just the protocol detail
-neobrain mark MED:39012345 --state read --rating 5 --note "the control design I want"
-
-neobrain remember "..." --kind correction  # permanent, append-only, immediate
-neobrain recall "montanide"                # search everything ever recorded
-neobrain rule add "<when>" "<do this>"     # procedural memory
-neobrain history 7                         # every version of a belief
-neobrain history --as-of 2026-03-01        # what did I believe then?
-neobrain graph CT26                        # what connects to what
-neobrain graph --path CT26 immunodominance # multi-hop
-neobrain conflicts --scan                  # evidence against stored beliefs
-
-neobrain teach 05                        # curriculum module 5, grounded in your corpus
-neobrain quiz                            # spaced repetition
-neobrain review                          # approve or reject the agent's memory edits
-neobrain backup                          # snapshot, safe while in use
-neobrain status
-```
-
-`neobrain ask` does not answer the question — it builds a **citable evidence
-pack**. That is the point: the model reads it and answers on top of it, and
-every claim in the answer traces to a passage you can open.
-
-## Connecting an agent
-
-**Claude Code**
-
-```bash
-claude mcp add neobrain -- neobrain mcp
-```
-
-Then add `AGENT.md` to your `CLAUDE.md`, or point at it directly.
-
-**Claude Desktop** — in `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "neobrain": {
-      "command": "neobrain",
-      "args": ["mcp"],
-      "env": { "NEOBRAIN_HOME": "/absolute/path/to/neobrain" }
-    }
-  }
-}
-```
-
-The agent gets ~20 tools: `brief`, `evidence`, `search`, `get_paper`,
-`fetch_fulltext`, `trials`, `run_sweep`, `propose_memory_edit`,
-`teaching_packet`, `due_review_cards`, and so on. It can propose memory edits.
-**It cannot apply them.** See `AGENT.md` for the full operating contract.
-
-## Scheduling the sweep
-
-```bash
-# Linux/macOS — 06:00 daily
-crontab -e
-0 6 * * * cd /path/to/neobrain && .venv/bin/neobrain sweep >> logs/sweep.log 2>&1
-```
-
-systemd timer and Windows Task Scheduler instructions are in
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), along with `scripts/` that set both up.
+Two dependencies (`requests`, `PyYAML`). Everything else is optional and the
+system degrades gracefully without it.
 
 ---
 
-## How the memory actually works
-
-The 2026 agent-memory literature has converged on three scopes — **episodic**
-(what happened), **semantic** (what is true), **procedural** (how to work) —
-and on one structural rule from the temporal-knowledge-graph systems: *never
-delete, invalidate*. NeoBrain implements all four ideas, with the addition that
-matters most for research: nothing enters the authoritative tiers unreviewed.
-
-### Episodic — the journal, which cannot be erased
+## The web portal
 
 ```bash
-neobrain remember "Montanide sequesters T cells at the injection site — avoid it" \
-    --kind preference --importance 4
-neobrain recall "montanide"
+neobrain web
 ```
 
-Everything the brain learns lands here immediately, with no approval step, from
-the first run. The table is append-only and **the database enforces it**:
+Six tabs, one per stage of the loop. Single-file HTML served by the standard
+library — no framework, no CDN, no build step, because a research tool you
+cannot start in three years is not durable.
+
+| Tab | Answers | Inside |
+|---|---|---|
+| **Today** | What should I do now? | Voice console, what the work needs, what needs your decision, new evidence on your hypotheses, what's new in the literature |
+| **Ask** | What does the evidence say? | Cited answer scaffold, **claim/draft checking**, raw evidence packs |
+| **Research** | What exists on this topic? | Keywords → clarifying questions → every journal → screening → export |
+| **Projects** | Where is my work? | Hypotheses (falsifier required), experiments (prediction first), decisions |
+| **Library** | What have I read? | Search, **extraction matrix**, **methods audit**, digests, entity graph |
+| **Bench** | How do I do this? | Peptide tools, model registry, molecular screen |
+| **Memory** | What do I know? | Approvals, conflicts, journal, beliefs, rules, spaced repetition |
+
+Binds `127.0.0.1` and refuses any other interface without `--allow-remote`.
+For remote access, tunnel: `ssh -L 8787:127.0.0.1:8787 you@your-machine`.
+
+### Voice
+
+Web Speech API, no dependency. Commands: `what's next` · `search <terms>` ·
+`check <sentence>` · `ask <question>` · `remember <something>` · `open <tab>`.
+
+Deliberately a small fixed grammar rather than free-form intent guessing — a
+voice interface that mishears "exclude" as "include" and acts on it silently is
+worse than none. **Chrome and Edge stream audio to a cloud service for
+recognition**; the UI says so. Synthesis is on-device. Local Whisper path in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+---
+
+## Research: keywords in, a screened list out
+
+```bash
+neobrain discover search "neoantigen vaccine pancreatic"
+```
+
+It asks only what your keywords have **not** already answered — type
+`MC38 mouse class II ELISpot randomized` and it skips four of six questions —
+then searches **OpenAlex (~250M works, every journal), PubMed (MeSH,
+publication types) and Europe PMC (preprints, OA full text)** at once.
+
+Results are deduplicated across sources (DOI first, then title, so a record
+arriving without a DOI still merges), screened against inclusion/exclusion
+criteria with nothing discarded, and exportable as BibTeX / RIS / CSV /
+Markdown. Open-access PDFs download via the Unpaywall data OpenAlex carries.
+
+```bash
+neobrain discover snowball 10.1038/s41586-023-06063-y --direction forward
+```
+
+Forward citations are how you learn your seed paper was refuted in 2025.
+
+---
+
+## Accuracy: how it earns trust
+
+**Every answer carries its shape before its content:**
+
+```
+Evidence strength: established — multiple higher-tier sources agree
+7 passages · 4 distinct sources · tiers 5:1 4:2 2:1
+Corpus coverage: 31 papers mention "class II" (2019 – 2026)
+```
+
+**Check a sentence before you publish it:**
+
+```bash
+neobrain check "Prophylactic vaccination reliably predicts therapeutic efficacy"
+```
+
+Verdicts are hedged by construction — `likely-supported`,
+`possibly-contradicted`, `needs-review`, `no-evidence`, `unverifiable-number` —
+because this is lexical analysis over your corpus, not entailment detection. An
+earlier version returned SUPPORTED/CONTRADICTED and was wrong in both
+directions on real examples. Where it *is* reliable is where the risk lives:
+your corpus is silent, your number has no numeric source, here are the three
+passages to read.
+
+---
+
+## Memory that cannot be lost
+
+**Episodic — append-only, enforced by the database:**
 
 ```
 $ sqlite3 brain.db "DELETE FROM journal WHERE id=2"
 Error: the journal is append-only: entries are never deleted
 ```
 
-Not a convention, a trigger. Neither a confused agent nor you at 2am can revise
-what was recorded. Corrections are made by *adding* an entry, so the history of
-being wrong survives alongside the fix.
+Not a convention, a trigger. Corrections are made by *adding*, so the history
+of being wrong survives alongside the fix.
 
-### Semantic — beliefs that change without forgetting
-
-Beliefs are versioned, never overwritten. A revision invalidates the old row and
-inserts a new one sharing a lineage:
+**Semantic — versioned, never overwritten:**
 
 ```
 $ neobrain history 3
   v1 #2 [moderate] (superseded)
     Class II epitopes contribute little to vaccine responses
-    asserted 2026-02-11 · invalidated 2026-08-14 · two 2026 cohorts report higher
-    class II frequencies than earlier pipelines assumed
+    asserted 2026-02-11 · invalidated 2026-08-14 · two 2026 cohorts report higher…
 → v2 #3 [moderate] (active)
     Class II epitopes contribute substantially to vaccine-induced responses
 ```
 
-Two timestamps, deliberately: `valid_from`/`valid_until` for when the claim was
-true of the world, `asserted_at`/`invalidated_at` for when *we* thought so.
-That is what makes `neobrain history --as-of 2026-03-01` able to answer "what
-did I believe when I wrote that methods section?" — the question that actually
-comes up, months later, in front of a reviewer.
+Bitemporal: `valid_from`/`valid_until` for when the claim was true of the
+world, `asserted_at`/`invalidated_at` for when *we* thought so. That is what
+makes `neobrain history --as-of 2026-03-01` able to reconstruct the state of
+knowledge behind a decision — the question that arrives months later in front
+of a reviewer.
 
-### Procedural — rules learned from your corrections
+**Procedural — rules learned from your corrections**, surfaced every session.
 
-```bash
-neobrain rule add "I design a mouse vaccine study" \
-                  "check for an adjuvant-alone arm before anything else"
-```
-
-Not a fact about immunology, so it does not belong in `beliefs`. It is a
-procedure, and procedures are what turn a correction into a mistake that does
-not recur. Rules appear at the top of every session brief.
-
-### Core — the always-loaded tier
-
-`memory/CORE.md`: identity, project, standing preferences. ~2k token cap,
-enforced by `neobrain doctor` nagging you.
-
-### Why not just load everything
-
-"Read all my memory at startup" works for about a week. Then the context window
-fills with stale material and answer quality drops in a way that is hard to
-attribute. `neobrain brief` is the bounded payload — core in full, rules, recent
-corrections, corpus state, latest digest, pending approvals, beliefs due for
-review, open contradictions, where you left off. Everything else is one
-`recall` or `search` away, and nothing is lost.
-
-### The approval gate is the important part
-
-The agent writes proposals. You see diffs. You decide.
-
-```
-$ neobrain review
-────────────────────────────────────────────────────────────────
-#3  knowledge → neoantigen_pipeline.md
-why      Two 2026 papers report class II epitopes at higher frequency
-         in vaccine-induced responses than the section currently implies
-evidence MED:39112233, PPR:PPR845221
-
---- a/neoantigen_pipeline.md
-+++ b/neoantigen_pipeline.md
-@@ -142,6 +142,11 @@
-+Class II contribution appears larger than early class I-focused
-+pipelines assumed (MED:39112233; and PPR:PPR845221, preprint,
-+unreplicated).
-
-[a]pply / [r]eject / [s]kip / [q]uit ?
-```
-
-An agent that silently rewrites its own beliefs will drift, and you will not
-notice until it confidently tells you something wrong in a paper draft. This
-gate costs you thirty seconds a day.
+**The approval gate.** The agent proposes; you approve diffs with
+`neobrain review`. There is no tool that lets it apply one — asserted by a test.
 
 ---
 
-## Reasoning, not just retrieval
-
-### Three retrieval legs, because they fail differently
-
-BM25 nails `HLA-A*02:01`, `NetMHCIIpan-4.3`, `Adpgk`, `NSG-SGM3` — the rare
-tokens that carry the meaning — and misses paraphrase. Vectors find "peptide
-presentation on class II" when you asked about "CD4 epitope display" and blur
-the alleles together. Neither can answer a question whose evidence spans papers.
-
-The third leg is an **entity graph**. Ask *"why would a vaccine response be
-invisible in CT26?"* — a question sharing almost no wording with its answer —
-and the graph seeds on `CT26`, spreads activation, and surfaces the passage
-about gp70/AH1 immunodominance:
-
-```
-$ neobrain graph --path CT26 immunodominance
-CT26 → AH1 → immunodominance
-```
-
-Entity extraction is a curated domain gazetteer plus regex for things with
-strict formats (HLA alleles, mutation notation, tool names), **not** an LLM.
-LLM extraction hallucinates edges, and in a research assistant a fabricated
-relationship between a gene and a phenotype is exactly the failure you cannot
-afford. Aliases normalize (`HLA LOH` ≡ `HLA loss of heterozygosity`) so the
-graph does not fragment. Edges are weighted co-occurrence, and the tool says so
-every time it prints a path: *a co-occurrence path is a lead, not a finding.*
-
-Questions are also **decomposed** — split on conjunctions, plus one query per
-named entity — and the sub-results fused, which is what makes multi-hop
-questions retrievable at all. MMR diversification then stops the top ten
-passages being ten near-copies from one paper.
-
-### Evidence grading
-
-Every paper gets a tier from its own text: randomized trial (5) down through
-cohort, in vivo, in vitro, preprint, to review/editorial (0). Evidence packs
-lead with a read on collective strength:
-
-```
-**Evidence strength:** established: multiple higher-tier sources agree.
-7 passages from 4 distinct sources.
-```
-
-so the instruction to label claims *established / contested / single-paper* has
-something underneath it besides vibes.
-
-### Contradiction detection
-
-Every sweep scans new evidence against your stored beliefs and queues the
-tensions:
-
-```
-$ neobrain conflicts
-#4 against belief: MC38 neoantigen vaccination improves survival
-cue: explicit negative result; could not confirm (shared: MC38, neoantigen)
-in: Failure to replicate MC38 vaccine benefit (tier 3)
-    In MC38 tumours, neoantigen vaccination did not improve survival, and we
-    were unable to confirm the previously reported benefit.
-```
-
-The detector is shared entities + negation/reversal cues + numeric divergence —
-deliberately over-sensitive and explicitly *not* a verdict. Dismissing a false
-positive costs five seconds; missing a real contradiction costs you a wrong
-claim in a paper. Scientific claim verification (SciFact-style stance models)
-would improve precision here and is the obvious upgrade path.
-
-### Reciprocal-rank fusion
-
-RRF takes the union of the legs without needing their score scales to be
-comparable, which they are not.
-
-So **start with `embeddings.backend: none`.** Keyword-only retrieval over this
-literature is genuinely good. Add vectors when you notice yourself failing to
-find things you know are in there:
-
-```yaml
-# config/settings.yaml
-embeddings:
-  backend: sentence-transformers
-  model: pritamdeka/S-PubMedBert-MS-MARCO   # biomedical; or all-MiniLM-L6-v2 to start
-```
+## Command reference
 
 ```bash
-pip install -e ".[embeddings]"
-neobrain embed --rebuild
-```
+# the work
+neobrain next                              # what the work needs from you
+neobrain project new "<name>" --question "<the question>"
+neobrain hypothesis add "<claim>" --falsifier "<what would refute it>"
+neobrain experiment plan "<title>" --prediction "<what you expect>"
+neobrain experiment result 3 "<what happened>" --outcome contradicted
 
-Vectors are stored as normalized float32 blobs in SQLite and scanned brute
-force. That is milliseconds for tens of thousands of chunks and saves you a
-vector database. When the corpus outgrows it, swap `neobrain/retrieve.py` and
-nothing else changes.
+# evidence
+neobrain ask "does class II inclusion improve durable responses?"
+neobrain answer "<question>" --bibtex
+neobrain check "<a sentence from your draft>"     # --draft for a paragraph
+neobrain discover search "<keywords>"             # --download --export refs.bib
+neobrain search "HLA LOH detection" -k 8
 
----
-
-## Full-text acquisition, and the line not to cross
-
-Open access is fetchable and legal: Europe PMC OA subset, PMC, bioRxiv/medRxiv.
-The sweep pulls JATS XML for the best new OA papers and splits it into labelled
-sections, so `neobrain paper <id> --methods` gives you the protocol detail that
-abstracts always omit.
-
-**Paywalled content is not bulk-downloadable.** Route it through your
-institutional proxy in a browser, save the PDF into `inbox/`, and:
-
-```bash
-pip install pypdf
+# reading
+neobrain paper MED:39012345 --methods
+neobrain mark MED:39012345 --state read --rating 5 --note "the control design I want"
 neobrain ingest-pdf --inbox --archive
+
+# memory
+neobrain remember "<something>" --kind correction
+neobrain recall "montanide"
+neobrain rule add "<when>" "<do this>"
+neobrain history 7                                # --as-of 2026-03-01
+neobrain review                                   # approve/reject memory edits
+
+# bench
+neobrain peptide windows KRAS_SEQ 12 D --wildtype G
+neobrain peptide junctions SIINFEKL,ASMTNMELM --linker AAY
+neobrain models --recommend structure
+neobrain clinic --tumour pancreatic --variants "KRAS G12D,B2M" --hla "HLA-C*08:02"
+
+# housekeeping
+neobrain web · doctor · status · backup · graph · conflicts · quiz · teach 05
 ```
 
-Do not build scraping around publisher paywalls. It gets your IP range blocked,
-which punishes everyone at your institution, and the ingestion path above works
-fine.
+Everything the agent can do, you can do from a terminal. An agent capability
+you cannot invoke yourself is one you cannot debug at 2am.
 
 ---
 
-## Tuning it
-
-`config/interests.yaml` is the file you touch most. It drives the queries, the
-scoring weights, and the digest threshold. Everything is transparent and
-additive — you can always ask why something surfaced:
+## Connecting an agent
 
 ```bash
-$ neobrain score "Class II neoepitopes drive durable responses in MC38" \
-    --abstract "We show that ..."
-score 21 (surfaced, threshold 6) — matched: neoepitope, MHC class II, MC38
+claude mcp add neobrain -- neobrain mcp     # Claude Code
+cat AGENT.md >> CLAUDE.md                    # the operating contract
 ```
 
-Retune weekly at first. A digest you skim and ignore is worse than no digest,
-because it trains you to ignore it.
+Claude Desktop, `claude_desktop_config.json`:
 
----
+```json
+{"mcpServers": {"neobrain": {
+  "command": "/absolute/path/to/neobrain/.venv/bin/neobrain",
+  "args": ["mcp"],
+  "env": {"NEOBRAIN_HOME": "/absolute/path/to/neobrain"}}}}
+```
 
-## Deployment, and the honest tradeoff
-
-Everything above is genuinely local — your notes, your PDFs, your database,
-your file access. The **reasoning model** is where "local" and "advanced" pull
-against each other:
-
-- **Hybrid (recommended to start):** local data, local memory, local files;
-  a frontier model over API for reasoning and code. Only the current question
-  and the retrieved snippets leave the machine.
-- **Fully local:** open-weight models have closed much of the gap and are
-  credible for agentic coding. On long multi-step tool loops and dense
-  immunology reasoning they still lose ground — and you will feel it most on
-  exactly the hard questions you built this for.
-
-A practical split: a local model for the cheap high-volume work (triaging 400
-abstracts a night, tagging, deduplication) and a frontier model for synthesis,
-code, and anything you will rely on. `docs/DEPLOYMENT.md` covers both.
-
-## Letting it use your machine
-
-You want the agent to operate the laptop. Do it in this order, not all at once:
-
-1. **Filesystem scoped to one directory.** `~/neobrain/` and `workspace/`.
-   Not your home directory, not Documents.
-2. **Named tools before a shell.** The MCP tools cover the real work; a raw
-   `bash -c` is a much larger blast radius while you are still learning its
-   failure modes.
-3. **Approval gate on writes and deletes.** Reads can be automatic.
-4. **Network allowlist** for the APIs you actually use.
-5. **Git the whole folder.** `git init` now. When the agent corrupts a knowledge
-   file at 2am — and it will, once — you want `git diff`.
-
-Widen the permissions after a few weeks of watching it behave, not before.
-Full detail in [`docs/SECURITY.md`](docs/SECURITY.md).
+43 tools: `brief`, `whats_next`, `evidence`, `check_claim`, `compose_answer`,
+`add_hypothesis`, `plan_experiment`, `record_result`, `remember`, `recall`,
+`graph_path`, `molecular_screen`, `propose_memory_edit`… and no tool to approve
+one.
 
 ---
 
@@ -502,80 +300,62 @@ Full detail in [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ```
 neobrain/
-├── AGENT.md                   the agent's operating contract — read this
+├── AGENT.md                   the agent's operating contract
+├── docs/  DESIGN.md · DEPLOYMENT.md · SECURITY.md · WORKFLOWS.md
 ├── config/
 │   ├── interests.yaml         what you care about; tune weekly
-│   ├── settings.yaml          system settings
-│   ├── models.yaml            the biology model registry
-│   └── curriculum.yaml        10-module learning path with checkpoints
+│   ├── models.yaml            ~20 biology models with licences and caveats
+│   ├── curriculum.yaml        10 modules with checkpoint tasks
+│   └── settings.yaml
 ├── memory/CORE.md             loaded in full every session
-├── knowledge/                 13 curated domain notes, retrieved on demand
-├── digests/YYYY-MM-DD.md      what changed, written by the sweep
-├── inbox/                     drop PDFs here
-├── workspace/                 the only place the agent writes freely
-├── neobrain/                  the package
-│   ├── sweep.py  digest.py  scoring.py  retrieve.py  embeddings.py
-│   ├── journal.py             append-only memory (immutable)
-│   ├── graph.py               entity graph + personalized PageRank
-│   ├── evidence.py            evidence tiers + contradiction detection
-│   ├── models.py              biology model registry + availability detection
-│   ├── peptides.py            sequence and construct calculations
+├── knowledge/                 13 curated domain notes
+├── neobrain/
+│   ├── discover.py            guided multi-source search + snowballing
+│   ├── extract.py             extraction with provenance + methods audit
+│   ├── science.py             projects, hypotheses, experiments, routing
+│   ├── answer.py              cited answers + claim checking
+│   ├── clinic.py              ESCAT tiers + trial screening
+│   ├── journal.py graph.py evidence.py memory.py retrieve.py …
 │   ├── web/                   dashboard: stdlib server + single-file app
-│   ├── memory.py  tutor.py  db.py  cli.py  mcp_server.py
-│   └── sources/  europepmc · clinicaltrials · preprints · fulltext · local
-├── docs/  DEPLOYMENT.md  SECURITY.md  WORKFLOWS.md
+│   └── sources/  openalex · pubmed · europepmc · clinicaltrials · preprints · local
 └── brain.db                   SQLite: everything
 ```
-
-## Design notes and prior art
-
-The memory design follows where the 2026 agent-memory field landed, adapted for
-research work where a wrong claim is expensive:
-
-- **Three memory scopes** — episodic / semantic / procedural — are now the
-  standard taxonomy across [Mem0, Zep, Letta and
-  successors](https://atlan.com/know/best-ai-agent-memory-frameworks-2026/).
-- **Invalidate, never delete.** [Zep's Graphiti](https://www.getzep.com/ai-agents/temporal-knowledge-graph/)
-  gives every edge a validity interval and writes an invalidation timestamp
-  instead of dropping the row, so the graph can say what was believed and when.
-  NeoBrain's beliefs are bitemporal for the same reason, and the journal goes
-  further by being immutable at the storage layer.
-- **Memory-as-OS.** [Letta/MemGPT](https://github.com/NirDiamant/Agent_Memory_Techniques)
-  splits main context from recall and archival stores, paged on demand — which
-  is what `brief` + `recall` + `search` are.
-- **Graph-seeded multi-hop retrieval.** HippoRAG and the
-  [GraphRAG](https://atlan.com/know/advanced-rag-techniques/) family seed an
-  entity graph from the query and spread activation. NeoBrain does this with
-  deterministic extraction rather than LLM triple extraction, trading recall for
-  the guarantee that no edge is fabricated.
-- **Stance-based claim verification.** [SciFact](https://aclanthology.org/2020.emnlp-main.609/)
-  frames contradiction detection as SUPPORTS / REFUTES / NOINFO. The detector
-  here is the deterministic precursor to that, and a local stance model is the
-  natural upgrade.
-
-The one deliberate divergence: most of these systems let the agent write to
-memory autonomously, and [research on memory
-contamination](https://arxiv.org/pdf/2605.28009) is now catching up with why
-that is risky. Here, raw capture is automatic and immutable, but promotion to
-*authoritative* memory always passes through you.
 
 ## Tests
 
 ```bash
-pip install pytest && pytest
+pytest        # 167 tests
 ```
 
-The tests cover the parts that would fail silently: scoring, chunking, rank
-fusion, SM-2 scheduling, proposal diffs and application, and the FTS escaping
-that otherwise turns a query with a hyphen into a syntax error.
+They cover the parts that fail silently: FTS escaping (`HLA-A*02:01` must not
+become a syntax error), rank fusion, SM-2 arithmetic, journal immutability,
+belief versioning, dedup across sources, extraction provenance, and a smoke
+test that every MCP tool actually *executes* — added after a tool named
+`evidence` shadowed the `evidence` module and broke two others in a way that
+listing the tools could not reveal.
 
 ---
+
+## Honest limits
+
+- Extraction recall is below an LLM's; unusually-phrased reporting is missed.
+  Mitigated by making absence explicit, not by pretending otherwise.
+- The methods audit reads prose — a paper can report `n` in a figure legend and
+  be scored as not reporting it.
+- Screening handles hundreds of records; Elicit does tens of thousands.
+- Clinical actionability uses a small hand-maintained table, not OncoKB/CIViC.
+- Trial matching cannot read eligibility criteria.
+- The claim checker is lexical, not entailment.
+
+Each of these is stated in the product where you meet it, not only here. A tool
+that hides its limits gets trusted in exactly the situations where it should
+not be.
 
 ## The rule that makes it worth using
 
 The agent attaches a source to every factual claim, or says it does not know.
 
 A confabulating research assistant is worse than none, because the error enters
-your thesis without a trail back to where it came from. Everything in this
-repository — the belief store, the approval gate, the citation-carrying context
-packs, the staleness warnings — exists to enforce that one property.
+your thesis without a trail back to where it came from. The belief store, the
+approval gate, the citation-carrying context packs, the staleness warnings, and
+`not reported` as a first-class value all exist to enforce that one property.

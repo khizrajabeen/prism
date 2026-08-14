@@ -42,15 +42,20 @@ import io
 import json
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from . import config, db
-from .sources import europepmc, openalex, preprints, pubmed
+from .sources import europepmc, openalex, pubmed
 from .sources.http import get
 
-SOURCES = ("openalex", "pubmed", "europepmc", "preprints")
+# Europe PMC indexes bioRxiv/medRxiv/Research Square, so preprints are covered
+# by that leg. The bioRxiv API has no server-side search — it returns everything
+# posted in a date range — which is right for the nightly sweep's fixed window
+# and wrong for a discovery search spanning years. Listing it here as a source
+# would have been a promise the code did not keep.
+SOURCES = ("openalex", "pubmed", "europepmc")
 
 
 # ------------------------------------------------------------ clarification

@@ -2,7 +2,6 @@
 most tests. A proposal that applies without approval, or applies differently
 than its diff showed, is the failure that matters."""
 
-import json
 
 import pytest
 

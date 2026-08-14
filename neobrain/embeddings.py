@@ -23,8 +23,7 @@ import array
 import math
 import sqlite3
 import struct
-from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence
 
 from . import config, db
 

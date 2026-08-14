@@ -195,6 +195,59 @@ def test_agent_cannot_apply_its_own_memory_edits():
     )
 
 
+def test_every_zero_arg_mcp_tool_actually_executes(brain):
+    """Smoke-test the whole tool surface.
+
+    This exists because a tool named `evidence` shadowed the `evidence` module
+    import for every tool defined after it, so `open_conflicts` and
+    `scan_for_conflicts` raised AttributeError at call time. Listing the tools
+    looked perfectly healthy — only calling them revealed it.
+    """
+    pytest.importorskip("mcp", reason="MCP SDK optional")
+    import asyncio
+
+    from neobrain import mcp_server
+
+    srv = mcp_server._server()
+    tools = asyncio.run(srv.list_tools())
+    # Anything with no required arguments can be called blind.
+    callable_now = [
+        t.name for t in tools
+        if not ((getattr(t, "input_schema", None)
+                 or getattr(t, "inputSchema", None) or {}).get("required") or [])
+        # run_sweep hits the network; excluded from the smoke test on purpose.
+        and t.name != "run_sweep"
+    ]
+    assert len(callable_now) >= 10, "expected a broad zero-arg surface to smoke-test"
+
+    broken = []
+    for name in callable_now:
+        try:
+            asyncio.run(srv.call_tool(name, {}))
+        except Exception as e:  # noqa: BLE001
+            broken.append(f"{name}: {type(e).__name__}: {e}")
+    assert not broken, "MCP tools raised on call:\n" + "\n".join(broken)
+
+
+def test_mcp_tool_names_do_not_shadow_imported_modules():
+    """The specific defect, asserted directly."""
+    pytest.importorskip("mcp", reason="MCP SDK optional")
+    import asyncio
+
+    from neobrain import mcp_server
+
+    tool_names = {t.name for t in asyncio.run(mcp_server._server().list_tools())}
+    module_names = {
+        n for n, v in vars(mcp_server).items()
+        if getattr(v, "__package__", None) == "neobrain"
+    }
+    clash = tool_names & module_names
+    assert not clash, (
+        f"tool name(s) shadow an imported module: {clash}. Alias the import "
+        f"(e.g. `from . import evidence as evidence_mod`)."
+    )
+
+
 def test_knowledge_reads_cannot_escape_the_directory():
     pytest.importorskip("mcp", reason="MCP SDK optional")
     import asyncio

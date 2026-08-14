@@ -262,7 +262,6 @@ def cmd_paper(args) -> int:
 def cmd_fulltext(args) -> int:
     from .sources import fulltext as ft
 
-    cfg = config.load()
     con = db.connect()
     if args.id:
         n = ft.fetch_for_paper(con, args.id)

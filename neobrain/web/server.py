@@ -29,7 +29,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .. import (
     answer, clinic, config, db, digest, discover, evidence, extract, graph, journal,

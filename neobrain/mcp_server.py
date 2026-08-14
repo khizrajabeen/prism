@@ -29,8 +29,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import (answer, clinic, config, db, digest, evidence, graph, journal,
-               memory, retrieve, science, tutor)
+from . import (answer, clinic, config, db, digest, graph, journal, memory,
+               retrieve, science, tutor)
+# Aliased: a tool below is named `evidence`, and an unaliased module import
+# would be shadowed by it for every tool defined after that point.
+from . import evidence as evidence_mod
 from .sources import fulltext as ft_mod
 
 # The SDK renamed its high-level server class in 2.0 (FastMCP → MCPServer).
@@ -407,7 +410,7 @@ def _server():
         """
         con = db.connect()
         try:
-            rows = evidence.open_conflicts(con, limit=limit)
+            rows = evidence_mod.open_conflicts(con, limit=limit)
             if not rows:
                 return "No open conflicts."
             return json.dumps(rows, indent=2)
@@ -419,7 +422,7 @@ def _server():
         """Re-scan the corpus for evidence contradicting stored beliefs."""
         con = db.connect()
         try:
-            return f"{evidence.scan(con)} candidate contradiction(s) opened"
+            return f"{evidence_mod.scan(con)} candidate contradiction(s) opened"
         finally:
             con.close()
 
