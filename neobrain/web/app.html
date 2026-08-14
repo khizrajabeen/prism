@@ -171,6 +171,7 @@ canvas { width: 100%; height: 460px; display: block; border-radius: 8px;
     <div class="brand"><b>NeoBrain</b><span id="ver">local</span></div>
     <button data-v="today" class="on">Today <span class="badge" id="b-today" hidden>0</span></button>
     <button data-v="ask">Ask</button>
+    <button data-v="research">Research</button>
     <button data-v="projects">Projects</button>
     <button data-v="library">Library</button>
     <button data-v="bench">Bench</button>
@@ -877,7 +878,8 @@ async function viewToday(T) {
   busy(T);
   const d = await api("/api/today");
   const s = d.stats || {}, sci = d.science || {};
-  const nodes = [...head("Today", "What changed, what needs a decision, and what the work needs next.")];
+  const nodes = [...head("Today", "What changed, what needs a decision, and what the work needs next."),
+                 voiceConsole()];
 
   // 1. What the WORK needs — before anything about the literature. The most
   //    common failure of a research tool is telling you about papers when what
@@ -948,6 +950,323 @@ async function viewToday(T) {
 
   into(T, nodes);
   refreshBadges(s, sci);
+}
+
+
+// --------------------------------------------------------------- research
+// Keywords → clarifying questions → federated search → screening → export.
+// Distinct from Ask (which answers from what you already have) and from the
+// nightly sweep (which watches a standing interest profile).
+async function viewResearch(T) {
+  const state = { keywords: "", facets: [], answers: {}, plan: null, results: [] };
+  const stepBox = el("div", {});
+  const out = el("div", {});
+
+  function stepKeywords() {
+    const kw = el("input", { placeholder: "keywords — e.g. neoantigen vaccine pancreatic",
+      value: state.keywords, onkeydown: e => { if (e.key === "Enter") go1(); } });
+    async function go1() {
+      state.keywords = kw.value.trim();
+      if (!state.keywords) return;
+      busy(stepBox, "working out what to ask you");
+      const r = await api("/api/discover/clarify", { body: { keywords: state.keywords } });
+      state.facets = r.facets || [];
+      stepQuestions();
+    }
+    stepBox.replaceChildren(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "1 · What are you looking for?"),
+      el("div", { class: "row" }, kw,
+        el("button", { class: "btn primary", onclick: go1 }, "Next"),
+        voiceButton(v => { kw.value = v; go1(); })),
+      el("div", { class: "note" },
+        "Two keywords are almost never a query. The next step asks only what your "
+        + "keywords have not already answered.")));
+    out.replaceChildren();
+  }
+
+  function stepQuestions() {
+    const controls = state.facets.map(f => {
+      const box = el("div", { class: "card" },
+        el("div", { style: "font-weight:600;margin-bottom:4px" }, f.question),
+        el("div", { class: "m", style: "font-size:12.5px;color:var(--faint);margin-bottom:9px" }, f.why));
+      if (f.id === "extra") {
+        const inp = el("input", { placeholder: "e.g. ELISpot, MC38, immunopeptidomics — or leave blank",
+          oninput: e => { state.answers[f.id] = e.target.value; } });
+        box.append(inp);
+      } else {
+        const row = el("div", { class: "row" });
+        for (const o of f.options) {
+          const btn = el("button", { class: "btn sm", onclick: () => {
+            if (f.multi) {
+              const cur = new Set(state.answers[f.id] || []);
+              cur.has(o.value) ? cur.delete(o.value) : cur.add(o.value);
+              state.answers[f.id] = [...cur];
+            } else {
+              state.answers[f.id] = o.value;
+            }
+            row.querySelectorAll("button").forEach(bb => {
+              const sel = f.multi ? (state.answers[f.id] || []).includes(bb.dataset.v)
+                                  : state.answers[f.id] === bb.dataset.v;
+              bb.className = "btn sm" + (sel ? " primary" : "");
+            });
+          } }, o.label);
+          btn.dataset.v = o.value;
+          row.append(btn);
+        }
+        box.append(row);
+      }
+      return box;
+    });
+
+    async function run() {
+      busy(out, "searching OpenAlex, PubMed, Europe PMC");
+      const plan = await api("/api/discover/plan",
+        { body: { keywords: state.keywords, answers: state.answers } });
+      state.plan = plan;
+      const r = await api("/api/discover/search",
+        { body: { plan, per_source: 50 } });
+      state.results = r.results || [];
+      renderResults(r);
+    }
+
+    stepBox.replaceChildren(el("div", {},
+      el("div", { class: "card" },
+        el("div", { class: "row", style: "justify-content:space-between" },
+          el("div", {}, el("b", {}, "Searching for: "), state.keywords),
+          el("button", { class: "btn sm", onclick: stepKeywords }, "change"))),
+      ...controls,
+      el("div", { class: "card" },
+        el("div", { class: "row" },
+          el("button", { class: "btn primary", onclick: run }, "Search every journal"),
+          el("button", { class: "btn", onclick: run }, "Skip — search now")),
+        el("div", { class: "note" },
+          "Runs against OpenAlex (~250M works, every journal), PubMed, Europe PMC "
+          + "and the preprint servers at once, then merges duplicates."))));
+  }
+
+  function renderResults(r) {
+    const c = r.counts || {};
+    const incl = el("input", { placeholder: "inclusion terms (comma separated)" });
+    const excl = el("input", { placeholder: "exclusion terms (comma separated)" });
+    const list = el("div", {});
+
+    const card = rec => {
+      const dl = el("div", {});
+      return el("div", { class: "card" },
+        el("div", { class: "t", style: "font-weight:600" },
+          rec.url ? el("a", { href: rec.url, target: "_blank", rel: "noopener" }, rec.title) : rec.title),
+        el("div", { class: "m", style: "margin:5px 0" },
+          rec.authors ? (rec.authors.split(",").slice(0, 6).join(", ")
+            + (rec.n_authors > 6 ? ` … +${rec.n_authors - 6}` : "")) : "authors unknown"),
+        el("div", { class: "m" },
+          el("i", {}, rec.journal || "—"), " · ", String(rec.pub_date || "").slice(0, 4),
+          rec.cited_by ? ` · cited ${rec.cited_by}×` : "",
+          " · ", el("span", { class: "pill " + (rec.is_oa ? "ok" : "") },
+            rec.is_oa ? "open access" : "paywalled"),
+          (rec.found_by || []).length > 1
+            ? el("span", { class: "pill acc", style: "margin-left:5px" },
+                "found by " + rec.found_by.length + " sources") : null,
+          rec.screen ? el("span", { class: "pill " + (rec.screen === "include" ? "ok" :
+            rec.screen === "exclude" ? "bad" : "warn"), style: "margin-left:5px" }, rec.screen) : null),
+        rec.abstract ? el("details", { style: "margin-top:8px" },
+          el("summary", { style: "cursor:pointer;font-size:13px;color:var(--accent-text)" }, "abstract"),
+          el("div", { class: "s", style: "margin-top:6px" }, rec.abstract.slice(0, 1800)))
+          : el("div", { class: "m" }, "no abstract available"),
+        (rec.screen_reasons || []).length
+          ? el("div", { class: "m", style: "margin-top:6px" }, rec.screen_reasons.join("; ")) : null,
+        el("div", { class: "row", style: "margin-top:9px" },
+          rec.pdf_url ? el("button", { class: "btn sm primary", onclick: async () => {
+            dl.replaceChildren(el("span", { class: "spin" }));
+            const d = await api("/api/discover/download", { body: { record: rec } });
+            dl.replaceChildren(el("div", { class: "note" + (d.ok ? "" : " warn") },
+              d.ok ? `saved → ${d.path}` : `${d.reason}. ${d.next || ""}`));
+          } }, "Download PDF") : null,
+          rec.url ? el("a", { class: "btn sm", href: rec.url, target: "_blank",
+            rel: "noopener", style: "display:inline-block;text-decoration:none" }, "Open") : null,
+          el("button", { class: "btn sm", onclick: async () => {
+            const d = await api("/api/discover/ingest", { body: { records: [rec] } });
+            dl.replaceChildren(el("div", { class: "note" }, `added to your corpus — ${d.note}`));
+          } }, "Add to my corpus")),
+        dl);
+    };
+
+    const paint = rows => list.replaceChildren(...rows.slice(0, 60).map(card));
+
+    async function rescreen() {
+      busy(out, "screening");
+      const rr = await api("/api/discover/search", { body: {
+        plan: state.plan, per_source: 50,
+        include_terms: incl.value.split(",").map(x => x.trim()).filter(Boolean),
+        exclude_terms: excl.value.split(",").map(x => x.trim()).filter(Boolean) } });
+      state.results = rr.results || [];
+      renderResults(rr);
+    }
+
+    async function doExport(fmt) {
+      const e = await api("/api/discover/export",
+        { body: { results: state.results, format: fmt } });
+      const w = window.open("", "_blank");
+      if (w) { w.document.write("<pre>" + esc(e.text) + "</pre>"); w.document.close(); }
+      else navigator.clipboard?.writeText(e.text);
+    }
+
+    out.replaceChildren(el("div", {},
+      el("div", { class: "card" },
+        el("div", { class: "grid g4" },
+          el("div", { class: "stat" }, el("div", { class: "n" }, num(c.unique || 0)),
+            el("div", { class: "l" }, "unique papers"),
+            el("div", { class: "h" }, num(c.retrieved || 0) + " retrieved, duplicates merged")),
+          el("div", { class: "stat" }, el("div", { class: "n" }, num(c.open_access || 0)),
+            el("div", { class: "l" }, "open access")),
+          el("div", { class: "stat" }, el("div", { class: "n" }, num(c.with_pdf || 0)),
+            el("div", { class: "l" }, "PDF fetchable")),
+          el("div", { class: "stat" },
+            el("div", { class: "n", style: "font-size:15px;line-height:1.5;font-weight:500" },
+              Object.entries(c.per_source || {}).map(([k, v]) => `${k}: ${v}`).join("\n") || "—"),
+            el("div", { class: "l" }, "per source"))),
+        (r.errors || []).length ? el("div", { class: "note warn" }, r.errors.join(" · ")) : null,
+        (state.plan?.narrowing || []).length ? el("div", { class: "note" },
+          "Narrowed by: " + state.plan.narrowing.join(" · ")) : null,
+        el("div", { class: "diff", style: "margin-top:8px" }, state.plan?.query || "")),
+      el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "Screen these results"),
+        el("div", { class: "row" }, incl, excl,
+          el("button", { class: "btn primary", onclick: rescreen }, "Apply")),
+        el("div", { class: "note" },
+          "Nothing is discarded — excluded records stay with their reason, so the "
+          + "screen is auditable and reversible."),
+        el("div", { class: "row", style: "margin-top:8px" },
+          el("span", { class: "m" }, "export:"),
+          ...["bibtex", "ris", "csv", "markdown"].map(f =>
+            el("button", { class: "btn sm", onclick: () => doExport(f) }, f)))),
+      list));
+    paint(state.results);
+  }
+
+  into(T, ...head("Research",
+    "Keywords in, a screened and citable list of publications out — across every "
+    + "journal, deduplicated, with free full text where it legally exists."),
+    stepBox, out);
+  stepKeywords();
+}
+
+// ------------------------------------------------------------------- voice
+// Web Speech API: no dependency, no key, works in Chrome/Edge. See the privacy
+// note in the UI — recognition is cloud-backed in those browsers.
+const VOICE_OK = "webkitSpeechRecognition" in window || "SpeechRecognition" in window;
+
+function voiceButton(onResult, label = "🎤") {
+  if (!VOICE_OK) return null;
+  const btn = el("button", { class: "btn", title: "dictate", style: "min-width:44px" }, label);
+  let rec = null, listening = false;
+  btn.addEventListener("click", () => {
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (listening && rec) { rec.stop(); return; }
+    rec = new Rec();
+    rec.lang = "en-GB"; rec.interimResults = true; rec.continuous = false;
+    let finalText = "";
+    rec.onstart = () => { listening = true; btn.textContent = "◉"; btn.classList.add("primary"); };
+    rec.onresult = e => {
+      finalText = "";
+      for (let i = 0; i < e.results.length; i++) finalText += e.results[i][0].transcript;
+      btn.title = finalText;
+    };
+    rec.onerror = e => { btn.textContent = "⚠"; btn.title = "speech error: " + e.error; };
+    rec.onend = () => {
+      listening = false; btn.textContent = label; btn.classList.remove("primary");
+      if (finalText.trim()) onResult(finalText.trim());
+    };
+    rec.start();
+  });
+  return btn;
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window) || !text) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(String(text).slice(0, 1200));
+  u.rate = 1.05; u.lang = "en-GB";
+  window.speechSynthesis.speak(u);
+}
+
+/* The voice console on Today: speak a command, it routes to the right tab and
+   reads the answer back. Deliberately a small, fixed command grammar rather
+   than free-form intent guessing — a voice interface that mishears "exclude"
+   as "include" and silently acts on it is worse than no voice interface. */
+const VOICE_COMMANDS = [
+  { re: /^(what('s| is)? )?next\b|what should i do/i, run: async () => {
+      const d = await api("/api/today");
+      const n = (d.next || [])[0];
+      return n ? `${n.kind}: ${n.what}. ${n.why}` : "Nothing outstanding.";
+    } },
+  { re: /^(search|find|research)\s+(.*)/i, run: async (m) => {
+      location.hash = "research"; go("research");
+      return `Opening research for ${m[2]}. I'll ask a few questions to narrow it.`;
+    } },
+  { re: /^(check|verify)\s+(.*)/i, run: async (m) => {
+      const r = await api("/api/check", { body: { claim: m[2] } });
+      return `${r.verdict.replace(/-/g, " ")}. ${r.note}`;
+    } },
+  { re: /^(ask|answer|explain)\s+(.*)/i, run: async (m) => {
+      const r = await api("/api/answer", { params: { q: m[2] } });
+      return `${r.evidence_strength}. ${r.n_passages} passages from ${r.n_sources} sources.`;
+    } },
+  { re: /^remember\s+(.*)/i, run: async (m) => {
+      await api("/api/journal", { body: { text: m[1], kind: "observation", importance: 3 } });
+      return "Recorded permanently.";
+    } },
+  { re: /^(open|go to)\s+(today|ask|research|projects|library|bench|memory)/i,
+    run: async (m) => { go(m[2].toLowerCase()); return `Opening ${m[2]}.`; } },
+];
+
+function voiceConsole() {
+  const transcript = el("div", { class: "m", style: "min-height:20px" });
+  const reply = el("div", {});
+  const speakBack = el("input", { type: "checkbox", checked: "", style: "width:auto" });
+
+  async function handle(text) {
+    transcript.textContent = "“" + text + "”";
+    for (const c of VOICE_COMMANDS) {
+      const m = text.match(c.re);
+      if (m) {
+        reply.replaceChildren(el("span", { class: "spin" }));
+        const answer = await c.run(m);
+        reply.replaceChildren(el("div", { class: "note" }, answer));
+        if (speakBack.checked) speak(answer);
+        return;
+      }
+    }
+    reply.replaceChildren(el("div", { class: "note warn" },
+      "I did not recognise that command. Try: “what's next”, “search KRAS G12D vaccine”, "
+      + "“check <a sentence>”, “ask <a question>”, “remember <something>”, or “open projects”."));
+  }
+
+  if (!VOICE_OK) {
+    return el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Voice"),
+      el("div", { class: "note warn" },
+        "This browser has no Web Speech API. Chrome or Edge support it; Firefox and "
+        + "Safari do not, and there is no polyfill worth having."));
+  }
+
+  return el("div", { class: "card" },
+    el("div", { class: "row", style: "justify-content:space-between" },
+      el("h2", { style: "margin:0" }, "Voice console"),
+      el("label", { class: "row", style: "gap:5px;font-size:12.5px;color:var(--muted)" },
+        speakBack, "read replies aloud")),
+    el("div", { class: "row", style: "margin-top:10px" },
+      voiceButton(handle, "🎤  Hold a conversation"),
+      ...["what's next", "open research", "open projects"].map(cmd =>
+        el("button", { class: "btn sm", onclick: () => handle(cmd) }, cmd))),
+    transcript, reply,
+    el("div", { class: "note warn" },
+      "Privacy: Chrome and Edge send audio to a cloud service for recognition. That is "
+      + "fine for “what's next” and poor for dictating unpublished results. For fully "
+      + "local speech, run Whisper locally — see docs/DEPLOYMENT.md. Text-to-speech is "
+      + "on-device and always private."),
+    el("div", { class: "note" },
+      "Commands: what's next · search <terms> · check <sentence> · ask <question> · "
+      + "remember <something> · open <tab>"));
 }
 
 // -------------------------------------------------------------------- ask
@@ -1272,8 +1591,8 @@ async function viewMemory(T) {
 }
 
 // ------------------------------------------------------------------ router
-const VIEWS = { today: viewToday, ask: viewAsk, projects: viewProjects,
-  library: viewLibrary, bench: viewBench, memory: viewMemory };
+const VIEWS = { today: viewToday, ask: viewAsk, research: viewResearch,
+  projects: viewProjects, library: viewLibrary, bench: viewBench, memory: viewMemory };
 
 function go(name) {
   document.querySelectorAll("nav button[data-v]").forEach(b =>

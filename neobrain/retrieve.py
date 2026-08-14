@@ -188,29 +188,38 @@ def _mmr(hits: list[Hit], k: int, lambda_: float = 0.72) -> list[Hit]:
     if len(hits) <= 2:
         return hits[:k]
 
-    pools = {id(h): _tokens(h.text) for h in hits}
-    selected: list[Hit] = [hits[0]]
-    remaining = hits[1:]
+    # Incremental: each candidate keeps a running "closest already-selected"
+    # score, updated only against the newly selected item. The naive version
+    # recomputes every pair on every iteration and profiled as the dominant
+    # cost of a search — O(k²n) work for an O(kn) problem.
+    pools = [_tokens(h.text) for h in hits]
+    selected_idx = [0]
+    remaining = list(range(1, len(hits)))
+    max_sim = {i: 0.0 for i in remaining}
 
-    while remaining and len(selected) < k:
-        best, best_score = None, -1e9
-        for h in remaining:
-            overlap = 0.0
-            for s in selected:
-                a, b = pools[id(h)], pools[id(s)]
-                if a and b:
-                    overlap = max(overlap, len(a & b) / len(a | b))
+    def _update(against: int) -> None:
+        a = pools[against]
+        pid = hits[against].paper_id
+        for i in remaining:
+            b = pools[i]
+            sim = (len(a & b) / len(a | b)) if (a and b) else 0.0
             # Two passages from the same paper are near-duplicates for the
             # purpose of "how many independent sources support this".
-            if any(h.paper_id and h.paper_id == s.paper_id for s in selected):
-                overlap = max(overlap, 0.6)
-            score = lambda_ * h.score - (1 - lambda_) * overlap
-            if score > best_score:
-                best, best_score = h, score
-        selected.append(best)  # type: ignore[arg-type]
-        remaining.remove(best)  # type: ignore[arg-type]
+            if pid and hits[i].paper_id == pid:
+                sim = max(sim, 0.6)
+            if sim > max_sim[i]:
+                max_sim[i] = sim
 
-    return selected
+    _update(0)
+    while remaining and len(selected_idx) < k:
+        best = max(remaining, key=lambda i: lambda_ * hits[i].score - (1 - lambda_) * max_sim[i])
+        selected_idx.append(best)
+        remaining.remove(best)
+        del max_sim[best]
+        if remaining:
+            _update(best)
+
+    return [hits[i] for i in selected_idx]
 
 
 def search(

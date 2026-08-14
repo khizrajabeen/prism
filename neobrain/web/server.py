@@ -32,8 +32,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import (
-    answer, clinic, config, db, digest, evidence, graph, journal, memory, models,
-    peptides, retrieve, science, tutor,
+    answer, clinic, config, db, digest, discover, evidence, graph, journal, memory,
+    models, peptides, retrieve, science, tutor,
 )
 
 APP_HTML = Path(__file__).parent / "app.html"
@@ -499,6 +499,90 @@ class Api:
         finally:
             con.close()
 
+    # ------------------------------------------------------------ discovery
+    def discover_clarify(self, p, b):
+        kw = (b.get("keywords") or p.get("keywords") or "").strip()
+        if not kw:
+            return {"error": "no keywords"}
+        facets = discover.clarify(kw)
+        return {"keywords": kw,
+                "facets": [{"id": f.id, "question": f.question, "options": f.options,
+                            "multi": f.multi, "why": f.why} for f in facets]}
+
+    def discover_plan(self, p, b):
+        return discover.build_query(b.get("keywords", ""), b.get("answers") or {})
+
+    def discover_search(self, p, b):
+        plan = b.get("plan") or discover.build_query(b.get("keywords", ""), b.get("answers") or {})
+        result = discover.federated_search(
+            plan, per_source=int(b.get("per_source", 50)),
+            sources=tuple(b.get("sources") or discover.SOURCES))
+        if b.get("include_terms") or b.get("exclude_terms"):
+            screened = discover.auto_screen(
+                result["results"],
+                include_terms=b.get("include_terms") or [],
+                exclude_terms=b.get("exclude_terms") or [],
+                min_year=b.get("min_year"))
+            result["results"] = screened["results"]
+            result["screen_counts"] = screened["counts"]
+        if b.get("save_as"):
+            con = db.connect()
+            try:
+                result["search_id"] = discover.save_search(con, b["save_as"], plan, result)
+            finally:
+                con.close()
+        return result
+
+    def discover_snowball(self, p, b):
+        return discover.snowball(b.get("seed", ""), direction=b.get("direction", "both"),
+                                 limit=int(b.get("limit", 40)))
+
+    def discover_download(self, p, b):
+        return discover.download_pdf(b.get("record") or {})
+
+    def discover_export(self, p, b):
+        return {"text": discover.export(b.get("results") or [], b.get("format", "bibtex"))}
+
+    def discover_saved(self, p, b):
+        con = db.connect()
+        try:
+            if p.get("id"):
+                return {"results": discover.get_results(con, int(p["id"]))}
+            return {"searches": discover.get_searches(con)}
+        finally:
+            con.close()
+
+    def discover_ingest(self, p, b):
+        """Pull chosen records into the corpus so they are searchable and citable."""
+        con = db.connect()
+        try:
+            from .. import embeddings, evidence as ev
+            cfg = config.load()
+            added = 0
+            for r in (b.get("records") or []):
+                row = {
+                    "id": r.get("id") or (f"DOI:{r.get('doi')}" if r.get("doi") else None),
+                    "source": "journal", "provider": "discover",
+                    "title": r.get("title", ""), "abstract": r.get("abstract", ""),
+                    "authors": r.get("authors", ""), "journal": r.get("journal", ""),
+                    "pub_date": r.get("pub_date", ""), "doi": r.get("doi", ""),
+                    "pmid": r.get("pmid", ""), "pmcid": r.get("pmcid", ""),
+                    "url": r.get("url", ""), "is_oa": int(bool(r.get("is_oa"))),
+                    "score": 0, "matched": "", "buckets": "discovered",
+                }
+                if not row["id"]:
+                    continue
+                if db.upsert_paper(con, row):
+                    added += 1
+                embeddings.rebuild_chunks_for_paper(con, row["id"], cfg)
+            con.commit()
+            ev.grade_corpus(con)
+            graph.index_chunks(con)
+            graph.invalidate_cache()
+            return {"added": added, "note": "now searchable in Ask and Library"}
+        finally:
+            con.close()
+
     # ---------------------------------------------------------------- sweep
     def run_sweep(self, p, b):
         from .. import sweep as sweep_mod
@@ -508,6 +592,14 @@ class Api:
 
 ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/today"): "today",
+    ("POST", "/api/discover/clarify"): "discover_clarify",
+    ("POST", "/api/discover/plan"): "discover_plan",
+    ("POST", "/api/discover/search"): "discover_search",
+    ("POST", "/api/discover/snowball"): "discover_snowball",
+    ("POST", "/api/discover/download"): "discover_download",
+    ("POST", "/api/discover/export"): "discover_export",
+    ("GET", "/api/discover/saved"): "discover_saved",
+    ("POST", "/api/discover/ingest"): "discover_ingest",
     ("GET", "/api/projects"): "projects",
     ("POST", "/api/projects/create"): "project_create",
     ("POST", "/api/hypothesis"): "hypothesis_add",

@@ -303,6 +303,35 @@ def neighbours(con: sqlite3.Connection, entity_id: int, limit: int = 15) -> list
     return db.rows_to_dicts(rows)
 
 
+# The whole edge table is pulled for every graph-ranked query, and a decomposed
+# question runs five of them. Cache the adjacency list, keyed on the edge count
+# and the max rowid so an ingest invalidates it without needing a callback.
+_ADJ_CACHE: dict[str, Any] = {"key": None, "adj": None}
+
+
+def _adjacency(con: sqlite3.Connection) -> dict[int, list[tuple[int, float]]]:
+    row = con.execute(
+        "SELECT COUNT(*) n, COALESCE(SUM(weight), 0) w FROM entity_edges"
+    ).fetchone()
+    key = (row["n"], round(float(row["w"]), 4))
+    if _ADJ_CACHE["key"] == key and _ADJ_CACHE["adj"] is not None:
+        return _ADJ_CACHE["adj"]
+
+    adjacency: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    for e in con.execute("SELECT a, b, weight FROM entity_edges WHERE weight > 0"):
+        adjacency[e["a"]].append((e["b"], e["weight"]))
+        adjacency[e["b"]].append((e["a"], e["weight"]))
+
+    _ADJ_CACHE["key"] = key
+    _ADJ_CACHE["adj"] = adjacency
+    return adjacency
+
+
+def invalidate_cache() -> None:
+    _ADJ_CACHE["key"] = None
+    _ADJ_CACHE["adj"] = None
+
+
 def personalized_pagerank(
     con: sqlite3.Connection,
     seeds: list[int],
@@ -321,10 +350,7 @@ def personalized_pagerank(
     if not seeds:
         return {}
 
-    adjacency: dict[int, list[tuple[int, float]]] = defaultdict(list)
-    for row in con.execute("SELECT a, b, weight FROM entity_edges WHERE weight > 0"):
-        adjacency[row["a"]].append((row["b"], row["weight"]))
-        adjacency[row["b"]].append((row["a"], row["weight"]))
+    adjacency = _adjacency(con)
     if not adjacency:
         return {s: 1.0 for s in seeds}
 

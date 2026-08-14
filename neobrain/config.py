@@ -180,8 +180,39 @@ class Config:
         return self.interests.get("trial_terms", []) or []
 
 
-def load() -> Config:
-    return Config(
+# Config is read on nearly every call in the retrieval path. Profiling showed
+# ~88% of a decomposed search was YAML parsing — interests.yaml is large and it
+# was being re-parsed five times per question. Cache it, keyed on file mtimes so
+# an edit still takes effect immediately without a restart.
+_CACHE: dict[str, Any] = {"stamp": None, "config": None}
+
+
+def _stamp() -> tuple:
+    return tuple(
+        (p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else (0, 0)
+        for p in (SETTINGS, INTERESTS)
+    )
+
+
+def load(*, refresh: bool = False) -> Config:
+    """Load config, memoized on the config files' mtime.
+
+    Pass ``refresh=True`` to force a re-read (or call :func:`invalidate`).
+    """
+    stamp = _stamp()
+    if not refresh and _CACHE["stamp"] == stamp and _CACHE["config"] is not None:
+        return _CACHE["config"]
+
+    cfg = Config(
         settings=_deep_merge(DEFAULT_SETTINGS, _load_yaml(SETTINGS)),
         interests=_load_yaml(INTERESTS),
     )
+    _CACHE["stamp"] = stamp
+    _CACHE["config"] = cfg
+    return cfg
+
+
+def invalidate() -> None:
+    """Drop the cached config — for tests, and after writing a config file."""
+    _CACHE["stamp"] = None
+    _CACHE["config"] = None

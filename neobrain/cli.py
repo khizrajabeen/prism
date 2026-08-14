@@ -16,8 +16,8 @@ from pathlib import Path
 from sqlite3 import connect as sqlite3_connect
 
 from . import (
-    answer, clinic, config, db, digest, evidence, graph, journal, memory, retrieve,
-    science, scoring, tutor,
+    answer, clinic, config, db, digest, discover, evidence, graph, journal, memory,
+    retrieve, science, scoring, tutor,
 )
 from .sources import local as local_src
 
@@ -951,6 +951,117 @@ def cmd_clinic(args) -> int:
     return 0
 
 
+
+def cmd_discover(args) -> int:
+    """Guided literature discovery: keywords → questions → every journal."""
+    con = db.connect()
+    try:
+        if args.action == "saved":
+            for srch in discover.get_searches(con):
+                print(_c(f"#{srch['id']} {srch['name']}", BOLD))
+                print(_c(f"    {srch['keywords']} · {srch['n_results']} results · "
+                         f"{srch['created_at'][:16]}", DIM))
+            return 0
+
+        if args.action == "snowball":
+            r = discover.snowball(args.seed, direction=args.direction, limit=args.limit)
+            if r.get("error"):
+                print(r["error"])
+                return 1
+            print(_c(f"seed: {r['seed']['title']}", BOLD))
+            for label in ("backward", "forward"):
+                rows = r.get(label) or []
+                if not rows:
+                    continue
+                print(_c(f"\n{label.upper()} ({len(rows)})", BOLD))
+                for x in rows[:args.limit]:
+                    oa = " · OA" if x.get("is_oa") else ""
+                    print(f"  {str(x.get('pub_date',''))[:4]} {x['title'][:76]}{oa}")
+            print(textwrap.fill(r["note"], width=92, initial_indent="\n", subsequent_indent=""))
+            return 0
+
+        # interactive search
+        facets = discover.clarify(args.keywords)
+        answers: dict = {}
+        if not args.yes:
+            print(_c(f"Searching for: {args.keywords}\n", BOLD))
+            for f in facets:
+                print(_c(f.question, BOLD))
+                print(_c(f"  {f.why}", DIM))
+                if f.id == "extra":
+                    val = input("  > ").strip()
+                    if val:
+                        answers[f.id] = val
+                    print()
+                    continue
+                for i, o in enumerate(f.options, 1):
+                    print(f"  {i}. {o['label']}")
+                raw = input("  choose (numbers, comma separated, blank to skip) > ").strip()
+                if raw:
+                    picks = [f.options[int(n) - 1]["value"] for n in raw.replace(" ", "").split(",")
+                             if n.isdigit() and 0 < int(n) <= len(f.options)]
+                    answers[f.id] = picks if f.multi else (picks[0] if picks else None)
+                print()
+
+        plan = discover.build_query(args.keywords, answers)
+        print(_c("query", BOLD))
+        print(textwrap.fill(plan["query"], width=92, initial_indent="  ", subsequent_indent="  "))
+        if plan["narrowing"]:
+            print(_c("  narrowed by: " + " · ".join(plan["narrowing"]), DIM))
+        print()
+
+        result = discover.federated_search(plan, per_source=args.per_source,
+                                           progress=lambda m: print(m))
+        c = result["counts"]
+        print(_c(f"\n{c['unique']} unique papers ({c['retrieved']} retrieved, duplicates merged) · "
+                 f"{c['open_access']} open access · {c['with_pdf']} PDF fetchable", BOLD))
+        for e in result.get("errors", []):
+            print(_c(f"  ! {e}", DIM))
+
+        rows = result["results"]
+        if args.include or args.exclude:
+            screened = discover.auto_screen(
+                rows,
+                include_terms=(args.include or "").split(",") if args.include else [],
+                exclude_terms=(args.exclude or "").split(",") if args.exclude else [])
+            rows = screened["results"]
+            print(_c(f"screened: {screened['counts']}", DIM))
+
+        for i, r in enumerate(rows[: args.limit], 1):
+            oa = _c(" OA", BOLD) if r.get("is_oa") else ""
+            print(_c(f"\n[{i}] {r['title']}", BOLD) + oa)
+            print(f"    {(r.get('authors') or 'authors unknown')[:88]}")
+            print(_c(f"    {r.get('journal','')} {str(r.get('pub_date',''))[:4]}"
+                     f" · cited {r.get('cited_by',0)}× · found by "
+                     f"{','.join(r.get('found_by', []))}", DIM))
+            print(_c(f"    {r.get('url','')}", DIM))
+            if r.get("pdf_url"):
+                print(_c(f"    PDF: {r['pdf_url']}", DIM))
+            if args.abstracts and r.get("abstract"):
+                print(textwrap.fill(r["abstract"][:420], width=92,
+                                    initial_indent="    ", subsequent_indent="    "))
+
+        if args.save:
+            sid = discover.save_search(con, args.save, plan, {"results": rows, "counts": c})
+            print(_c(f"\nsaved as search #{sid}", BOLD))
+        if args.download:
+            print(_c("\ndownloading open-access PDFs…", BOLD))
+            for r in rows[: args.limit]:
+                if r.get("pdf_url"):
+                    d = discover.download_pdf(r)
+                    print(f"  {'✓' if d['ok'] else '✗'} {r['title'][:60]} "
+                          f"{d.get('path') or d.get('reason','')}")
+        if args.export:
+            out = Path(args.export)
+            fmt = out.suffix.lstrip(".") or "bibtex"
+            fmt = {"bib": "bibtex", "md": "markdown"}.get(fmt, fmt)
+            out.write_text(discover.export(rows, fmt), encoding="utf-8")
+            print(_c(f"\nexported {len(rows)} records → {out}", BOLD))
+    finally:
+        con.close()
+    return 0
+
+
 def cmd_progress(args) -> int:
     con = db.connect()
     print(tutor.progress(con))
@@ -1136,6 +1247,27 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--topic"); c.add_argument("--source")
     cs.add_parser("stats")
     p.set_defaults(func=cmd_card)
+
+    p = sub.add_parser("discover",
+                       help="guided literature discovery across every journal")
+    ds = p.add_subparsers(dest="action", required=True)
+    a = ds.add_parser("search", help="keywords → clarifying questions → federated search")
+    a.add_argument("keywords")
+    a.add_argument("--yes", action="store_true", help="skip the questions, search now")
+    a.add_argument("--limit", type=int, default=25)
+    a.add_argument("--per-source", type=int, default=50)
+    a.add_argument("--abstracts", action="store_true")
+    a.add_argument("--include", help="inclusion terms, comma separated")
+    a.add_argument("--exclude", help="exclusion terms, comma separated")
+    a.add_argument("--save", metavar="NAME", help="save this search")
+    a.add_argument("--download", action="store_true", help="fetch open-access PDFs")
+    a.add_argument("--export", metavar="FILE", help="write .bib / .ris / .csv / .md")
+    a = ds.add_parser("snowball", help="expand from a seed paper through the citation graph")
+    a.add_argument("seed", help="DOI, or a title to look up")
+    a.add_argument("--direction", choices=["both", "backward", "forward"], default="both")
+    a.add_argument("--limit", type=int, default=25)
+    ds.add_parser("saved", help="list saved searches")
+    p.set_defaults(func=cmd_discover)
 
     p = sub.add_parser("next", help="what the work needs from you, across all projects")
     p.set_defaults(func=cmd_next)

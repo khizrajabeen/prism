@@ -23,7 +23,7 @@ from typing import Any, Iterable, Sequence
 
 from . import config
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 -- ------------------------------------------------------------------ papers
@@ -317,6 +317,39 @@ CREATE TABLE IF NOT EXISTS claim_checks (
     note        TEXT
 );
 
+-- ------------------------------------------------- guided discovery
+-- Saved searches from the Research workflow. Keeping the plan alongside the
+-- results is what makes a literature search reproducible: six months later you
+-- can see not just what you found but what you asked for.
+CREATE TABLE IF NOT EXISTS searches (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT,
+    created_at  TEXT,
+    keywords    TEXT,
+    plan        TEXT,        -- JSON: the query plan, including the narrowing choices
+    counts      TEXT,        -- JSON: retrieved / unique / OA, per source
+    n_results   INTEGER
+);
+CREATE TABLE IF NOT EXISTS search_results (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    search_id   INTEGER REFERENCES searches(id) ON DELETE CASCADE,
+    doi         TEXT,
+    pmid        TEXT,
+    title       TEXT,
+    authors     TEXT,
+    journal     TEXT,
+    pub_date    TEXT,
+    abstract    TEXT,
+    url         TEXT,
+    pdf_url     TEXT,
+    is_oa       INTEGER DEFAULT 0,
+    cited_by    INTEGER DEFAULT 0,
+    found_by    TEXT,        -- which sources returned it; agreement is a weak quality signal
+    screen      TEXT,        -- include | exclude | maybe
+    screen_reasons TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sr_search ON search_results(search_id, screen);
+
 -- ------------------------------------------------------------- journal
 -- Append-only episodic memory. Everything the brain ever learns lands here
 -- first, immediately, with no approval step — because the cost of losing an
@@ -524,6 +557,16 @@ def _add_missing_columns(con: sqlite3.Connection) -> None:
 
 
 def _migrate(con: sqlite3.Connection) -> None:
+    # Fast path. The web server opens a connection per request and the CLI opens
+    # one per command; running ~200 DDL statements every time to discover that
+    # nothing has changed is pure overhead. One cheap SELECT decides.
+    try:
+        row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        if row is not None and int(row["value"]) == SCHEMA_VERSION:
+            return
+    except sqlite3.OperationalError:
+        pass  # meta table does not exist yet — this is a fresh database
+
     con.executescript(SCHEMA)
     _add_missing_columns(con)
     con.executescript(TRIGGERS)

@@ -243,3 +243,74 @@ sqlite3 brain.db "VACUUM;"       # occasionally, after large deletions
 
 If retrieval quality drops as the corpus grows, that is the signal to turn on
 embeddings — not before.
+
+
+---
+
+## Making it faster
+
+Measure before you optimise. `neobrain` ships a profiler harness in the tests,
+and the numbers below are from doing exactly that on this codebase — the
+result was not what I would have guessed.
+
+| Operation | Before | After | What it actually was |
+|---|---|---|---|
+| `retrieve.search` | 22.7 ms | 4.0 ms | MMR recomputing every pairwise similarity each iteration |
+| `retrieve.multi_search` | 10.9 ms | 1.7 ms | `interests.yaml` re-parsed five times per question |
+| `memory.brief` | 9.2 ms | 0.5 ms | same YAML re-parse |
+| `db.connect()` | 1.1 ms | 0.6 ms | ~200 DDL statements run on every connection to discover nothing had changed |
+
+**88% of a decomposed search was YAML parsing.** Not retrieval, not SQLite, not
+the graph. That is the argument for profiling rather than reasoning about
+performance: the obvious suspects were all innocent.
+
+The three fixes, in case your corpus grows into different bottlenecks:
+
+1. **Cache config on mtime** (`config.load`). Invalidate with `config.invalidate()`.
+2. **Skip the migration when the schema version already matches** (`db._migrate`).
+3. **Incremental MMR** — keep a running "closest already-selected" score per
+   candidate instead of recomputing the whole matrix (`retrieve._mmr`).
+4. **Cache the entity adjacency list** keyed on edge count (`graph._adjacency`).
+
+### When the corpus gets big
+
+- **Under ~50k chunks**: everything above is fine as-is.
+- **50k–500k chunks**: turn on embeddings; the brute-force vector scan is O(n)
+  but stays under ~100 ms. Consider `sqlite3` `ANALYZE` after big ingests.
+- **Beyond that**: replace the linear scan in `embeddings.search_vectors` with
+  an ANN index (hnswlib, or LanceDB alongside `brain.db`). Nothing else has to
+  change — that function is the whole seam.
+- **Sweep time** is dominated by polite rate limiting, not compute. It is
+  deliberately slow; do not parallelise it into a ban.
+
+```bash
+sqlite3 brain.db "PRAGMA optimize; VACUUM; ANALYZE;"   # after a large ingest
+```
+
+## Voice
+
+The dashboard's voice console uses the **Web Speech API** — no dependency, no
+key, no build step. It works in Chrome and Edge; Firefox and Safari do not
+implement recognition and there is no polyfill worth having.
+
+**The privacy tradeoff, stated plainly:** in Chrome and Edge, speech
+*recognition* streams audio to a cloud service. That is fine for "what's next"
+and wrong for dictating unpublished results. Speech *synthesis* (reading
+replies back) is on-device and always private.
+
+For fully local speech, run Whisper and point the browser at it instead:
+
+```bash
+pip install faster-whisper
+# or, faster on CPU:
+#   git clone https://github.com/ggerganov/whisper.cpp && make
+```
+
+Then record with `MediaRecorder`, POST the blob to a small local endpoint, and
+transcribe there. The command grammar in `app.html` (`VOICE_COMMANDS`) is the
+only part that needs to change — it takes a string and does not care where the
+string came from.
+
+The grammar is deliberately small and fixed rather than free-form intent
+guessing. A voice interface that mishears "exclude" as "include" and silently
+acts on it is worse than no voice interface.
