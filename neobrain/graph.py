@@ -99,6 +99,7 @@ GAZETTEER: dict[str, list[str]] = {
         "montanide", "CpG", "STING agonist", "lipid nanoparticle", "mRNA vaccine",
         "synthetic long peptide", "dendritic cell vaccine", "viral vector",
         "junctional neoepitope", "prophylactic", "therapeutic", "orthotopic",
+        "MHC class I", "MHC class II",
         "minimal residual disease", "TESLA", "polyfunctionality", "immunodominance",
         "proteasome", "immunoproteasome", "TAP transport", "peptide-MHC stability",
     ],
@@ -138,6 +139,21 @@ ALIASES: dict[str, str] = {
     "cross presentation": "cross-presentation",
     "immunodominant": "immunodominance",
     "immunodominant response": "immunodominance",
+    # MHC class is one of the most load-bearing distinctions in this field, so
+    # it needs its own nodes. An earlier version aliased "class I" to
+    # "antigen presentation", which collapsed a specific concept into a general
+    # one and left "class II" with no node at all — so a hypothesis about class
+    # II and a paper about class II shared nothing.
+    "class I": "MHC class I",
+    "class-I": "MHC class I",
+    "MHC-I": "MHC class I",
+    "MHC I": "MHC class I",
+    "HLA class I": "MHC class I",
+    "class II": "MHC class II",
+    "class-II": "MHC class II",
+    "MHC-II": "MHC class II",
+    "MHC II": "MHC class II",
+    "HLA class II": "MHC class II",
     "checkpoint inhibitor": "checkpoint blockade",
     "immune checkpoint blockade": "checkpoint blockade",
     "ICB": "checkpoint blockade",
@@ -151,8 +167,6 @@ ALIASES: dict[str, str] = {
     "tumour mutational load": "tumor mutational burden",
     "neo-antigen": "neoantigen",
     "neo-epitope": "neoepitope",
-    "MHC-I": "antigen presentation",
-    "class I": "antigen presentation",
     "TIL": "tumor infiltrating lymphocyte",
     "tumour infiltrating lymphocyte": "tumor infiltrating lymphocyte",
     "tumor-infiltrating lymphocyte": "tumor infiltrating lymphocyte",

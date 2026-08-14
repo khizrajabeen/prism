@@ -23,7 +23,7 @@ from typing import Any, Iterable, Sequence
 
 from . import config
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 -- ------------------------------------------------------------------ papers
@@ -316,6 +316,24 @@ CREATE TABLE IF NOT EXISTS claim_checks (
     sources     TEXT,               -- JSON
     note        TEXT
 );
+
+-- ------------------------------------------------ structured extraction
+-- One row per extracted value, each carrying the sentence it came from.
+-- The provenance column is not decoration: it is what separates an extraction
+-- you can defend in a methods section from a number in a spreadsheet.
+CREATE TABLE IF NOT EXISTS extractions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id    TEXT REFERENCES papers(id) ON DELETE CASCADE,
+    field       TEXT,
+    value       TEXT,
+    unit        TEXT,
+    evidence    TEXT,        -- the source sentence, verbatim
+    section     TEXT,
+    confidence  TEXT,
+    extracted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_extractions ON extractions(paper_id, field);
+CREATE INDEX IF NOT EXISTS idx_extractions_field ON extractions(field);
 
 -- ------------------------------------------------- guided discovery
 -- Saved searches from the Research workflow. Keeping the plan alongside the

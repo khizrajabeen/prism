@@ -324,6 +324,102 @@ def evidence_for(con: sqlite3.Connection, kind: str, item_id: int) -> list[dict]
 
 # ------------------------------------------------------------------ status
 
+def route_evidence(
+    con: sqlite3.Connection,
+    paper_ids: list[str] | None = None,
+    *,
+    min_overlap: int = 2,
+    limit_papers: int = 60,
+) -> list[dict[str, Any]]:
+    """Match new literature to the user's own open hypotheses.
+
+    This is the capability no literature tool can have, because no literature
+    tool knows what you are trying to find out. Elicit can screen ten thousand
+    papers against criteria you type each time; Scite can tell you how the
+    world cites a paper. Neither can say *"this one bears on your hypothesis
+    #3, the one you have an experiment running for"* — that requires the work
+    ledger to exist alongside the corpus.
+
+    Matching is entity overlap plus term coverage, deliberately conservative.
+    A lead is a suggestion to read something, not a claim about what it says,
+    so it is recorded with stance ``informs`` and marked auto-suggested.
+    """
+    from . import graph
+
+    hypotheses = get_hypotheses(con, status="open")
+    if not hypotheses:
+        return []
+
+    if paper_ids is None:
+        paper_ids = [r["id"] for r in con.execute(
+            "SELECT id FROM papers ORDER BY first_seen DESC, score DESC LIMIT ?",
+            (limit_papers,)).fetchall()]
+    if not paper_ids:
+        return []
+
+    hyp_entities = {
+        h["id"]: {n for _, n in graph.extract(f"{h['statement']} {h.get('falsifier') or ''}")}
+        for h in hypotheses
+    }
+    hyp_by_id = {h["id"]: h for h in hypotheses}
+
+    ph = ",".join("?" * len(paper_ids))
+    papers = con.execute(
+        f"SELECT id, title, abstract, url, evidence_tier FROM papers WHERE id IN ({ph})",
+        paper_ids).fetchall()
+
+    leads: list[dict[str, Any]] = []
+    for p in papers:
+        paper_entities = {n for _, n in graph.extract(f"{p['title']} {p['abstract'] or ''}")}
+        if not paper_entities:
+            continue
+        for hid, ents in hyp_entities.items():
+            shared = ents & paper_entities
+            if len(shared) < min_overlap:
+                continue
+            already = con.execute(
+                """SELECT 1 FROM evidence_links
+                   WHERE kind='hypothesis' AND item_id=? AND paper_id=? LIMIT 1""",
+                (hid, p["id"])).fetchone()
+            if already:
+                continue
+            note = ("auto-suggested: shares " + ", ".join(sorted(shared)[:5]))
+            link_evidence(con, "hypothesis", hid, paper_id=p["id"],
+                          stance="informs", note=note)
+            leads.append({
+                "hypothesis_id": hid,
+                "hypothesis": hyp_by_id[hid]["statement"],
+                "paper_id": p["id"],
+                "title": p["title"],
+                "url": p["url"],
+                "tier": p["evidence_tier"],
+                "shared": sorted(shared),
+                "why": note,
+            })
+
+    if leads:
+        journal.record(
+            con,
+            f"{len(leads)} new paper(s) may bear on open hypotheses: "
+            + "; ".join(f"#{lead['hypothesis_id']} ← {lead['title'][:60]}" for lead in leads[:4]),
+            kind="observation", source="routing", importance=3)
+    return leads
+
+
+def open_leads(con: sqlite3.Connection, limit: int = 15) -> list[dict[str, Any]]:
+    """Auto-suggested paper→hypothesis links you have not acted on."""
+    rows = con.execute(
+        """SELECT e.id, e.item_id AS hypothesis_id, e.paper_id, e.note,
+                  h.statement, p.title, p.url, p.evidence_tier
+           FROM evidence_links e
+           JOIN hypotheses h ON h.id = e.item_id
+           LEFT JOIN papers p ON p.id = e.paper_id
+           WHERE e.kind='hypothesis' AND e.stance='informs'
+             AND e.note LIKE 'auto-suggested%' AND h.status='open'
+           ORDER BY e.id DESC LIMIT ?""", (limit,)).fetchall()
+    return db.rows_to_dicts(rows)
+
+
 def project_status(con: sqlite3.Connection, project_id: int) -> dict[str, Any]:
     """Everything about one project, in the shape a supervisor would ask for."""
     proj = con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()

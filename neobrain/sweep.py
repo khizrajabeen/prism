@@ -19,7 +19,7 @@ import time
 import traceback
 from typing import Any, Callable
 
-from . import config, db, digest, evidence, graph, journal, scoring
+from . import config, db, digest, evidence, extract, graph, journal, science, scoring
 from .sources import clinicaltrials, europepmc, fulltext, http, preprints
 
 
@@ -199,6 +199,25 @@ def sweep(
         errors.append(f"graph: {e}")
         emit(f"  ! graph pass failed: {e}")
 
+    # ------------------------------------------------- structured extraction
+    extracted = {}
+    try:
+        extracted = extract.extract_corpus(con, limit=40)
+        if extracted.get("values"):
+            emit(f"  [extract] {extracted['values']} values from "
+                 f"{extracted['papers']} papers")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"extract: {e}")
+
+    # --------------------------------------- routing to your open hypotheses
+    leads = []
+    try:
+        leads = science.route_evidence(con, [p["id"] for p in new_papers] or None)
+        if leads:
+            emit(f"  [leads] {len(leads)} new paper(s) bear on your open hypotheses")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"routing: {e}")
+
     # ------------------------------------------------- contradiction scanning
     conflicts = 0
     try:
@@ -255,6 +274,8 @@ def sweep(
         "graded": graded,
         "graph": graph_report,
         "conflicts": conflicts,
+        "extracted": extracted,
+        "leads": len(leads),
         "errors": errors,
         "digest": str(path),
         "duration_s": duration,

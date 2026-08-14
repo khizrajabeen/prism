@@ -32,8 +32,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import (
-    answer, clinic, config, db, digest, discover, evidence, graph, journal, memory,
-    models, peptides, retrieve, science, tutor,
+    answer, clinic, config, db, digest, discover, evidence, extract, graph, journal,
+    memory, models, peptides, retrieve, science, tutor,
 )
 
 APP_HTML = Path(__file__).parent / "app.html"
@@ -376,6 +376,7 @@ class Api:
                     "digest_date": latest[0].stem if latest else None,
                     "digest": latest[0].read_text(encoding="utf-8")[:4000] if latest else "",
                 },
+                "leads": science.open_leads(con, limit=5),
                 "recent_memory": journal.timeline(con, limit=6),
                 "rules": memory.get_rules(con)[:8],
             }
@@ -499,6 +500,60 @@ class Api:
         finally:
             con.close()
 
+    # ----------------------------------------------------------- extraction
+    def extract_matrix(self, p, b):
+        con = db.connect()
+        try:
+            ids = b.get("paper_ids") or []
+            if not ids:
+                q = (b.get("query") or "").strip()
+                if q:
+                    ids = [r["id"] for r in retrieve.keyword_papers(con, q, int(b.get("k", 15)))]
+                else:
+                    ids = [r["id"] for r in con.execute(
+                        """SELECT p.id FROM papers p WHERE EXISTS
+                           (SELECT 1 FROM sections s WHERE s.paper_id=p.id)
+                           ORDER BY p.score DESC LIMIT ?""", (int(b.get("k", 15)),)).fetchall()]
+            for pid in ids:
+                if not con.execute("SELECT 1 FROM extractions WHERE paper_id=? LIMIT 1",
+                                   (pid,)).fetchone():
+                    extract.store(con, pid, extract.extract_paper(con, pid))
+            return extract.matrix(con, ids, b.get("fields") or None)
+        finally:
+            con.close()
+
+    def extract_audit(self, p, b):
+        con = db.connect()
+        try:
+            if p.get("id"):
+                return extract.audit(con, p["id"])
+            return extract.audit_corpus(con, limit=int(p.get("limit", 40)))
+        finally:
+            con.close()
+
+    def extract_fields(self, p, b):
+        return {"fields": extract.ALL_FIELDS,
+                "audit_items": [{"key": k, "label": l, "why": w}
+                                for k, l, w in extract.AUDIT_ITEMS]}
+
+    def evidence_weight(self, p, b):
+        con = db.connect()
+        try:
+            if b.get("paper_ids"):
+                return extract.weigh_support(con, b["paper_ids"])
+            return extract.evidence_weight(con, p.get("id", ""))
+        finally:
+            con.close()
+
+    def leads(self, p, b):
+        con = db.connect()
+        try:
+            if p.get("scan") == "1":
+                science.route_evidence(con)
+            return {"leads": science.open_leads(con, limit=int(p.get("n", 20)))}
+        finally:
+            con.close()
+
     # ------------------------------------------------------------ discovery
     def discover_clarify(self, p, b):
         kw = (b.get("keywords") or p.get("keywords") or "").strip()
@@ -592,6 +647,11 @@ class Api:
 
 ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/today"): "today",
+    ("POST", "/api/extract/matrix"): "extract_matrix",
+    ("GET", "/api/extract/audit"): "extract_audit",
+    ("GET", "/api/extract/fields"): "extract_fields",
+    ("POST", "/api/evidence-weight"): "evidence_weight",
+    ("GET", "/api/leads"): "leads",
     ("POST", "/api/discover/clarify"): "discover_clarify",
     ("POST", "/api/discover/plan"): "discover_plan",
     ("POST", "/api/discover/search"): "discover_search",

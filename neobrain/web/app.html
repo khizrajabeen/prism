@@ -914,7 +914,25 @@ async function viewToday(T) {
     ));
   }
 
-  // 3. Standing rules — things you already told it.
+  // 3. New literature that bears on YOUR open hypotheses. No other tool can
+  //    show this, because no other tool knows the hypotheses.
+  if ((d.leads || []).length) {
+    nodes.push(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "New evidence on your open hypotheses"),
+      d.leads.map(l => el("div", { class: "hit" },
+        el("div", { class: "m" }, "hypothesis #", String(l.hypothesis_id), ": ", l.statement),
+        el("div", { class: "t" },
+          l.url ? el("a", { href: l.url, target: "_blank", rel: "noopener" }, l.title) : l.title,
+          l.evidence_tier !== null && l.evidence_tier !== undefined
+            ? el("span", { class: "pill " + (l.evidence_tier >= 4 ? "ok" : ""),
+                style: "margin-left:6px" }, "tier " + l.evidence_tier + "/5") : null),
+        el("div", { class: "m" }, l.note))),
+      el("div", { class: "note" },
+        "Suggested by shared entities — a prompt to read, not a claim about what the "
+        + "paper says.")));
+  }
+
+  // 4. Standing rules — things you already told it.
   if ((d.rules || []).length) {
     nodes.push(el("div", { class: "card" },
       el("h2", { style: "margin-top:0" }, "Rules you have taught it"),
@@ -1148,6 +1166,123 @@ async function viewResearch(T) {
     + "journal, deduplicated, with free full text where it legally exists."),
     stepBox, out);
   stepKeywords();
+}
+
+// ------------------------------------------------------ extraction matrix
+// Elicit's differentiator, done with provenance: every reported cell opens the
+// sentence it came from, and "not reported" is a value rather than a blank.
+function panelMatrix(T) {
+  const q = el("input", { placeholder: "papers matching… (blank = best in corpus)",
+    onkeydown: e => { if (e.key === "Enter") run(); } });
+  const out = el("div", {});
+
+  async function run() {
+    busy(out, "extracting");
+    const m = await api("/api/extract/matrix", { body: { query: q.value.trim(), k: 15 } });
+    if (!m.rows?.length) {
+      out.replaceChildren(el("div", { class: "card" }, el("div", { class: "empty" },
+        "No papers with full text yet — run a sweep, or add papers from Research.")));
+      return;
+    }
+
+    const detail = el("div", {});
+    const cell = (row, f) => {
+      const c = row.cells[f];
+      if (!c.reported) {
+        return el("td", {}, el("span", { class: "pill warn",
+          title: "A literal reading found no statement of this" }, "not reported"));
+      }
+      return el("td", {}, el("button", {
+        class: "btn sm", style: "font-weight:500;text-align:left",
+        onclick: () => {
+          detail.replaceChildren(el("div", { class: "card" },
+            el("div", { class: "m" }, row.title),
+            el("div", { style: "font-weight:600;margin:6px 0" },
+              f.replace(/_/g, " "), ": ", c.value),
+            el("div", { class: "diff" }, "“" + c.evidence + "”"),
+            el("div", { class: "m", style: "margin-top:6px" },
+              "from the ", c.section || "text", " section · confidence ", c.confidence)));
+          detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        } }, c.value));
+    };
+
+    const gapRows = Object.entries(m.gap_summary || {}).filter(([, v]) => !v.startsWith("0/"));
+
+    out.replaceChildren(el("div", {},
+      gapRows.length ? el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "What this literature does not report"),
+        ...gapRows.map(([f, v]) => el("div", { class: "hit" },
+          el("div", { class: "s" }, el("b", {}, f.replace(/_/g, " ")), " — ", v))),
+        el("div", { class: "note" },
+          "Read the columns downwards. A field most papers omit is a finding about "
+          + "the field, not a hole in the table.")) : null,
+      el("div", { class: "card", style: "overflow-x:auto" },
+        el("table", {},
+          el("tr", {}, el("th", {}, "paper"),
+            ...m.fields.map(f => el("th", {}, f.replace(/_/g, " ")))),
+          ...m.rows.map(row => el("tr", {},
+            el("td", {}, el("div", { style: "font-weight:600;max-width:270px" },
+                row.url ? el("a", { href: row.url, target: "_blank", rel: "noopener" }, row.title)
+                        : row.title),
+              el("div", { class: "m" }, row.journal, " ", row.year,
+                row.tier !== null && row.tier !== undefined
+                  ? el("span", { class: "pill " + (row.tier >= 4 ? "ok" : ""),
+                      style: "margin-left:6px" }, "tier " + row.tier + "/5") : null)),
+            ...m.fields.map(f => cell(row, f))))),
+        el("div", { class: "note" }, m.note)),
+      detail));
+  }
+
+  into(T, el("div", { class: "card" },
+    el("div", { class: "row" }, q,
+      el("button", { class: "btn primary", onclick: run }, "Build matrix")),
+    el("div", { class: "note" },
+      "Pattern-based extraction: it cannot invent a value, and every reported cell "
+      + "opens the sentence it came from. Click any cell.")), out);
+  run();
+}
+
+// --------------------------------------------------------- methods audit
+function panelAudit(T) {
+  const out = el("div", {});
+  async function run() {
+    busy(out, "auditing");
+    const a = await api("/api/extract/audit", { params: { limit: 40 } });
+    if (!a.papers) {
+      out.replaceChildren(el("div", { class: "card" },
+        el("div", { class: "empty" }, a.note || "No full text in the corpus yet.")));
+      return;
+    }
+    const bar = share => el("div", {
+      style: "height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden" },
+      el("div", { style: "height:100%;width:" + Math.round(share * 100) + "%;background:"
+        + (share > .7 ? "var(--ok)" : share > .4 ? "var(--warn)" : "var(--danger)") }));
+
+    out.replaceChildren(el("div", {},
+      el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" },
+          "Reporting across " + a.papers + " papers with full text"),
+        el("p", { class: "sub" },
+          "Mean completeness " + Math.round(a.mean_completeness * 100) + "% of the reporting "
+          + "essentials — the items ARRIVE and CONSORT have asked for since 2010."),
+        ...Object.entries(a.by_item).map(([k, v]) => el("div", { class: "hit" },
+          el("div", { class: "row", style: "justify-content:space-between" },
+            el("b", {}, v.label),
+            el("span", { class: "pill " + (v.share > .7 ? "ok" : v.share > .4 ? "warn" : "bad") },
+              v.reported_by + "/" + v.of)),
+          el("div", { style: "margin:7px 0" }, bar(v.share)),
+          el("div", { class: "m" }, v.why_it_matters)))),
+      el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "Weakest reporting in your corpus"),
+        ...(a.weakest || []).map(w => el("div", { class: "note warn" },
+          el("b", {}, w.label), " — only " + w.reported_by + " of " + w.of + " papers. ",
+          w.why_it_matters)),
+        el("div", { class: "note" },
+          "This measures reporting, not rigour. A paper can be excellent and badly "
+          + "written up — but you cannot appraise what was not described."))));
+  }
+  into(T, out);
+  run();
 }
 
 // ------------------------------------------------------------------- voice
@@ -1516,8 +1651,10 @@ async function viewProjects(T) {
 
 // ---------------------------------------------------------------- library
 async function viewLibrary(T) {
-  shell("Library", "What you have read, what is new, and how it connects.",
+  shell("Library", "What you have read, what it reports, and how it connects.",
     [{ id: "search", label: "Search", render: viewSearch },
+     { id: "matrix", label: "Compare (extraction matrix)", render: panelMatrix },
+     { id: "audit", label: "Methods audit", render: panelAudit },
      { id: "digest", label: "What's new", render: viewDigest },
      { id: "graph", label: "Connections", render: viewGraph }]);
 }
