@@ -32,8 +32,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import (
-    config, db, digest, evidence, graph, journal, memory, models, peptides,
-    retrieve, tutor,
+    answer, clinic, config, db, digest, evidence, graph, journal, memory, models,
+    peptides, retrieve, science, tutor,
 )
 
 APP_HTML = Path(__file__).parent / "app.html"
@@ -354,6 +354,151 @@ class Api:
         finally:
             con.close()
 
+    # ------------------------------------------------------------ the work
+    def today(self, p, b):
+        """The inbox: what changed, what needs a decision, what the work needs."""
+        con = db.connect()
+        try:
+            s = db.stats(con)
+            latest = digest.latest(1)
+            return {
+                "date": db.today(),
+                "stats": s,
+                "science": science.stats(con),
+                "next": science.whats_next(con),
+                "needs_you": {
+                    "proposals": memory.pending_proposals(con)[:6],
+                    "conflicts": evidence.open_conflicts(con, limit=6),
+                    "beliefs_due": memory.get_beliefs(con, due_only=True, limit=6),
+                    "cards_due": s["cards_due"],
+                },
+                "changed": {
+                    "digest_date": latest[0].stem if latest else None,
+                    "digest": latest[0].read_text(encoding="utf-8")[:4000] if latest else "",
+                },
+                "recent_memory": journal.timeline(con, limit=6),
+                "rules": memory.get_rules(con)[:8],
+            }
+        finally:
+            con.close()
+
+    def projects(self, p, b):
+        con = db.connect()
+        try:
+            if p.get("id"):
+                return science.project_status(con, int(p["id"]))
+            projects = science.get_projects(con, status=p.get("status") or None)
+            for proj in projects:
+                proj["counts"] = science.project_status(con, proj["id"])["counts"]
+            return {"projects": projects,
+                    "unassigned_hypotheses": science.get_hypotheses(con, status="open"),
+                    "stats": science.stats(con)}
+        finally:
+            con.close()
+
+    def project_create(self, p, b):
+        con = db.connect()
+        try:
+            return {"id": science.create_project(
+                con, b.get("name", "").strip(), b.get("question", ""), b.get("deadline", ""))}
+        finally:
+            con.close()
+
+    def hypothesis_add(self, p, b):
+        con = db.connect()
+        try:
+            return {"id": science.add_hypothesis(
+                con, b.get("statement", ""), project_id=b.get("project_id"),
+                rationale=b.get("rationale", ""), falsifier=b.get("falsifier", ""),
+                prior=b.get("prior", ""))}
+        except ValueError as e:
+            return {"error": str(e)}
+        finally:
+            con.close()
+
+    def hypothesis_resolve(self, p, b):
+        con = db.connect()
+        try:
+            science.resolve_hypothesis(con, int(b["id"]), b.get("status", "inconclusive"),
+                                       resolution=b.get("resolution", ""),
+                                       posterior=b.get("posterior", ""))
+            return {"ok": True}
+        except ValueError as e:
+            return {"error": str(e)}
+        finally:
+            con.close()
+
+    def experiment_plan(self, p, b):
+        con = db.connect()
+        try:
+            return {"id": science.plan_experiment(
+                con, b.get("title", ""), project_id=b.get("project_id"),
+                hypothesis_id=b.get("hypothesis_id"), design=b.get("design", ""),
+                prediction=b.get("prediction", ""))}
+        except ValueError as e:
+            return {"error": str(e)}
+        finally:
+            con.close()
+
+    def experiment_update(self, p, b):
+        con = db.connect()
+        try:
+            if b.get("status") and not b.get("result"):
+                con.execute("UPDATE experiments SET status=?, started_at=COALESCE(started_at,?)"
+                            " WHERE id=?", (b["status"], db.now(), int(b["id"])))
+                con.commit()
+                return {"ok": True}
+            return science.record_result(
+                con, int(b["id"]), b.get("result", ""), outcome=b.get("outcome", "ambiguous"),
+                surprise=int(b.get("surprise", 0)))
+        except ValueError as e:
+            return {"error": str(e)}
+        finally:
+            con.close()
+
+    def decision_add(self, p, b):
+        con = db.connect()
+        try:
+            return {"id": science.record_decision(
+                con, b.get("decision", ""), project_id=b.get("project_id"),
+                rationale=b.get("rationale", ""), alternatives=b.get("alternatives", ""),
+                would_revisit_if=b.get("would_revisit_if", ""),
+                review_on=b.get("review_on", ""))}
+        finally:
+            con.close()
+
+    # ------------------------------------------------------------- accuracy
+    def answer_compose(self, p, b):
+        q = (p.get("q") or b.get("question") or "").strip()
+        if not q:
+            return {"error": "no question"}
+        con = db.connect()
+        try:
+            return answer.compose(q, con=con, k=int(p.get("k", 12)))
+        finally:
+            con.close()
+
+    def claim_check(self, p, b):
+        claim = (b.get("claim") or p.get("claim") or "").strip()
+        if not claim:
+            return {"error": "no claim"}
+        con = db.connect()
+        try:
+            if b.get("draft"):
+                return {"checks": answer.check_draft(claim, con=con)}
+            return answer.check(claim, con=con)
+        finally:
+            con.close()
+
+    # ------------------------------------------------------------- clinical
+    def clinic_screen(self, p, b):
+        con = db.connect()
+        try:
+            profile = clinic.PatientProfile.from_dict(b or {})
+            return clinic.screen(con, profile)
+        finally:
+            con.close()
+
     # ---------------------------------------------------------------- sweep
     def run_sweep(self, p, b):
         from .. import sweep as sweep_mod
@@ -362,6 +507,17 @@ class Api:
 
 
 ROUTES: dict[tuple[str, str], str] = {
+    ("GET", "/api/today"): "today",
+    ("GET", "/api/projects"): "projects",
+    ("POST", "/api/projects/create"): "project_create",
+    ("POST", "/api/hypothesis"): "hypothesis_add",
+    ("POST", "/api/hypothesis/resolve"): "hypothesis_resolve",
+    ("POST", "/api/experiment"): "experiment_plan",
+    ("POST", "/api/experiment/update"): "experiment_update",
+    ("POST", "/api/decision"): "decision_add",
+    ("GET", "/api/answer"): "answer_compose",
+    ("POST", "/api/check"): "claim_check",
+    ("POST", "/api/clinic/screen"): "clinic_screen",
     ("GET", "/api/stats"): "stats",
     ("GET", "/api/brief"): "brief",
     ("GET", "/api/digest"): "digest",

@@ -23,7 +23,7 @@ from typing import Any, Iterable, Sequence
 
 from . import config
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 -- ------------------------------------------------------------------ papers
@@ -211,6 +211,110 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS meta (
     key         TEXT PRIMARY KEY,
     value       TEXT
+);
+
+-- ============================================================ THE WORK
+-- The scientific method as a data model, not a note-taking one.
+--
+--   question → evidence → hypothesis → prediction → experiment → result
+--            → belief update → next question
+--
+-- Everything else in this database attaches to a node of that loop. A feature
+-- that attaches to none of them is a utility, not part of the brain.
+CREATE TABLE IF NOT EXISTS projects (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    question    TEXT,               -- the one-sentence question this project answers
+    status      TEXT DEFAULT 'active',   -- active | paused | done | abandoned
+    started_at  TEXT,
+    updated_at  TEXT,
+    deadline    TEXT,
+    notes       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hypotheses (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    statement   TEXT NOT NULL,
+    rationale   TEXT,
+    -- open | supported | refuted | inconclusive | abandoned
+    status      TEXT DEFAULT 'open',
+    -- What observation would make you abandon this? A hypothesis without a
+    -- falsifier is a belief, and belongs in the beliefs table instead.
+    falsifier   TEXT,
+    prior       TEXT,               -- your stated confidence before testing
+    posterior   TEXT,               -- after the evidence came in
+    created_at  TEXT,
+    resolved_at TEXT,
+    resolution  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_hyp_project ON hypotheses(project_id, status);
+
+CREATE TABLE IF NOT EXISTS experiments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    hypothesis_id INTEGER REFERENCES hypotheses(id) ON DELETE SET NULL,
+    title       TEXT NOT NULL,
+    design      TEXT,               -- model, groups, n, endpoints
+    -- Recorded BEFORE the result exists. This is the whole point: with the
+    -- prediction on the record, hindsight bias becomes visible instead of
+    -- invisible, and a surprising result stays surprising.
+    prediction  TEXT,
+    predicted_at TEXT,
+    -- planned | running | done | abandoned
+    status      TEXT DEFAULT 'planned',
+    started_at  TEXT,
+    ended_at    TEXT,
+    result      TEXT,
+    outcome     TEXT,               -- as_predicted | contradicted | ambiguous | failed
+    surprise    INTEGER,            -- 0-5, recorded at result time
+    tools       TEXT,               -- JSON: {tool: version} captured at run time
+    notes       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_exp_project ON experiments(project_id, status);
+
+-- Decisions are not beliefs. "We will use MC38 rather than CT26" is a choice
+-- with a rationale and a review date, not a claim about the world.
+CREATE TABLE IF NOT EXISTS decisions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    decision    TEXT NOT NULL,
+    rationale   TEXT,
+    alternatives TEXT,              -- what was considered and rejected
+    would_revisit_if TEXT,          -- the trigger to reopen this
+    decided_at  TEXT,
+    review_on   TEXT,
+    status      TEXT DEFAULT 'standing'   -- standing | revisited | reversed
+);
+
+-- Links any work item to the evidence behind it. One table rather than five
+-- join tables, because the shapes are identical and the queries are simple.
+CREATE TABLE IF NOT EXISTS evidence_links (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT,               -- hypothesis | experiment | decision | project
+    item_id     INTEGER,
+    paper_id    TEXT,
+    chunk_id    INTEGER,
+    belief_id   INTEGER,
+    stance      TEXT DEFAULT 'supports',   -- supports | contradicts | informs
+    note        TEXT,
+    linked_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_evlinks ON evidence_links(kind, item_id);
+
+-- Answers we have given, with the evidence and the verdict, so a claim in a
+-- draft can be traced back to what the corpus actually said at the time.
+CREATE TABLE IF NOT EXISTS claim_checks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    checked_at  TEXT,
+    claim       TEXT,
+    verdict     TEXT,               -- supported | unsupported | contradicted | mixed
+    confidence  TEXT,
+    n_support   INTEGER DEFAULT 0,
+    n_contra    INTEGER DEFAULT 0,
+    top_tier    INTEGER,
+    sources     TEXT,               -- JSON
+    note        TEXT
 );
 
 -- ------------------------------------------------------------- journal

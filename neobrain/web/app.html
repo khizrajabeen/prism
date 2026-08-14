@@ -160,22 +160,25 @@ canvas { width: 100%; height: 460px; display: block; border-radius: 8px;
 </head>
 <body>
 <div class="app">
+  <!--
+    Six tabs, one per stage of the loop researchers actually run:
+      question → evidence → hypothesis → experiment → result → belief
+    Everything that used to be its own tab (entity graph, digest, conflicts,
+    review, models, quiz) was a *mechanism*, not a destination. Mechanisms are
+    now lenses inside the stage where you would reach for them.
+  -->
   <nav>
     <div class="brand"><b>NeoBrain</b><span id="ver">local</span></div>
-    <div class="group">Work</div>
-    <button data-v="overview" class="on">Overview</button>
-    <button data-v="search">Search</button>
-    <button data-v="graph">Entity graph</button>
-    <button data-v="digest">Digest</button>
-    <div class="group">Memory</div>
-    <button data-v="journal">Journal</button>
-    <button data-v="beliefs">Beliefs</button>
-    <button data-v="review">Review <span class="badge" id="b-rev" hidden>0</span></button>
-    <button data-v="conflicts">Conflicts <span class="badge" id="b-con" hidden>0</span></button>
-    <div class="group">Bench</div>
-    <button data-v="models">Models</button>
-    <button data-v="tools">Peptide tools</button>
-    <button data-v="learn">Learn</button>
+    <button data-v="today" class="on">Today <span class="badge" id="b-today" hidden>0</span></button>
+    <button data-v="ask">Ask</button>
+    <button data-v="projects">Projects</button>
+    <button data-v="library">Library</button>
+    <button data-v="bench">Bench</button>
+    <button data-v="memory">Memory <span class="badge" id="b-mem" hidden>0</span></button>
+    <div class="group" style="margin-top:auto">Loop</div>
+    <div style="font-size:11px;color:var(--faint);padding:0 10px 14px;line-height:1.7">
+      question → evidence<br>→ hypothesis → experiment<br>→ result → belief
+    </div>
   </nav>
   <main id="main"><div class="empty"><span class="spin"></span> loading…</div></main>
 </div>
@@ -216,14 +219,33 @@ async function api(path, opts = {}) {
 }
 
 const main = $("#main");
-const busy = (msg = "loading") => { main.replaceChildren(
-  el("div", { class: "empty" }, el("span", { class: "spin" }), " " + msg + "…")); };
-const setMain = (...nodes) => main.replaceChildren(...nodes.flat());
+// Views render into an explicit target so they can be either a whole page or a
+// panel inside a tab. Passing the target beats a module-level "current target",
+// which breaks the moment a view awaits.
+const into = (T, ...nodes) => (T || main).replaceChildren(...nodes.flat());
+const busy = (T, msg = "loading") => into(T,
+  el("div", { class: "empty" }, el("span", { class: "spin" }), " " + msg + "…"));
 const head = (title, sub) => [el("h1", {}, title), sub && el("p", { class: "sub" }, sub)];
 
+/* A tabbed shell. `panels` is [{id, label, render(container)}]. */
+function shell(title, sub, panels, initial) {
+  const bar = el("div", { class: "row", style: "gap:6px;margin-bottom:16px;flex-wrap:wrap" });
+  const body = el("div", {});
+  let current = initial || panels[0].id;
+  const paint = () => {
+    bar.replaceChildren(...panels.map(pn => el("button", {
+      class: "btn sm" + (pn.id === current ? " primary" : ""),
+      onclick: () => { current = pn.id; paint(); body.replaceChildren(); pn.render(body); },
+    }, pn.label)));
+  };
+  paint();
+  into(null, ...head(title, sub), bar, body);
+  (panels.find(pn => pn.id === current) || panels[0]).render(body);
+}
+
 // --------------------------------------------------------------- overview
-async function viewOverview() {
-  busy();
+async function viewOverview(T) {
+  busy(T);
   const s = await api("/api/stats");
   const env = s.environment || {};
   const stat = (n, l, h) => el("div", { class: "stat" },
@@ -271,20 +293,20 @@ async function viewOverview() {
     el("p", { class: "sub" }, "Exactly what your agent reads at the start of a session."),
     el("div", { class: "scroll" }, el("pre", { class: "md" }, brief.markdown || ""))));
 
-  setMain(nodes);
+  into(T, nodes);
   refreshBadges(s);
 }
 
-function refreshBadges(s) {
+function refreshBadges(s, sci) {
   const set = (id, n) => { const b = $(id); if (!b) return;
     b.hidden = !n; b.textContent = n; };
-  set("#b-rev", s.proposals_pending || 0);
-  set("#b-con", s.conflicts_open || 0);
+  set("#b-mem", (s.proposals_pending || 0) + (s.conflicts_open || 0));
+  set("#b-today", (sci && sci.awaiting_result) || 0);
 }
 
 // ----------------------------------------------------------------- search
 let lastQuery = "";
-async function viewSearch() {
+async function viewSearch(T) {
   const input = el("input", { placeholder: "e.g. why is the adjuvant-alone control important?",
     value: lastQuery, onkeydown: e => { if (e.key === "Enter") run(); } });
   const kind = el("select", {},
@@ -329,7 +351,7 @@ async function viewSearch() {
         el("div", { class: "s", html: hl(h.snippet) })))));
   }
 
-  setMain([
+  into(T, [
     ...head("Search", "Hybrid retrieval: keyword + entity graph" +
       " (+ vectors when enabled), fused by rank."),
     el("div", { class: "card" },
@@ -349,7 +371,7 @@ const KIND_COLORS = { gene: "#e0724a", hla: "#7c5cd6", cell_line: "#0f8f84",
   mouse: "#c2810f", tool: "#3b7dd8", assay: "#c2418a", concept: "#5d6773",
   mutation: "#b42318" };
 
-async function viewGraph() {
+async function viewGraph(T) {
   const input = el("input", { placeholder: "centre on an entity, e.g. CT26 (blank = most mentioned)" });
   const from = el("input", { placeholder: "from, e.g. CT26" });
   const to = el("input", { placeholder: "to, e.g. immunodominance" });
@@ -375,7 +397,7 @@ async function viewGraph() {
       el("div", { class: "note" }, r.note)));
   }
 
-  setMain([
+  into(T, [
     ...head("Entity graph", "Passages connected to a question through the literature's own "
       + "structure, not through wording. This is what answers multi-hop questions."),
     el("div", { class: "card" },
@@ -492,7 +514,7 @@ function layout(canvas, nodes, edges, centre) {
 }
 
 // ---------------------------------------------------------------- journal
-async function viewJournal() {
+async function viewJournal(T) {
   const q = el("input", { placeholder: "search everything ever recorded…",
     onkeydown: e => { if (e.key === "Enter") load(); } });
   const text = el("textarea", { placeholder: "What should be remembered permanently?" });
@@ -524,7 +546,7 @@ async function viewJournal() {
     text.value = ""; load();
   }
 
-  setMain([
+  into(T, [
     ...head("Journal", "Append-only episodic memory. Recorded immediately, "
       + "and the database itself refuses to edit or delete it."),
     el("div", { class: "card" },
@@ -542,8 +564,8 @@ async function viewJournal() {
 }
 
 // ---------------------------------------------------------------- beliefs
-async function viewBeliefs() {
-  busy();
+async function viewBeliefs(T) {
+  busy(T);
   const [b, r] = await Promise.all([api("/api/beliefs"), api("/api/rules")]);
   const historyBox = el("div", {});
 
@@ -562,7 +584,7 @@ async function viewBeliefs() {
     historyBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  setMain([
+  into(T, [
     ...head("Beliefs and rules", "Semantic memory (sourced claims, versioned never overwritten) "
       + "and procedural memory (how to work, learned from your corrections)."),
     el("div", { class: "card" },
@@ -590,10 +612,10 @@ async function viewBeliefs() {
 }
 
 // ----------------------------------------------------------------- review
-async function viewReview() {
-  busy();
+async function viewReview(T) {
+  busy(T);
   const r = await api("/api/proposals");
-  const render = list => setMain([
+  const render = list => into(T, [
     ...head("Review", "The approval gate. The agent proposes; nothing enters authoritative "
       + "memory until you approve the diff."),
     list.length ? list.map(p => {
@@ -618,21 +640,21 @@ async function viewReview() {
 
   async function decide(id, decision, note) {
     await api("/api/proposals/decide", { body: { id, decision, note } });
-    viewReview();
-    api("/api/stats").then(refreshBadges);
+    viewReview(T);
+    api("/api/today").then(d => refreshBadges(d.stats||{}, d.science||{}));
   }
   render(r.proposals || []);
 }
 
 // -------------------------------------------------------------- conflicts
-async function viewConflicts(scan) {
-  busy(scan ? "scanning the corpus" : "loading");
+async function viewConflicts(T, scan) {
+  busy(T, scan ? "scanning the corpus" : "loading");
   const r = await api("/api/conflicts", { params: { scan: scan ? 1 : 0 } });
-  setMain([
+  into(T, [
     ...head("Conflicts", "Evidence that may contradict what the brain believes."),
     el("div", { class: "card" },
       el("div", { class: "row" },
-        el("button", { class: "btn primary", onclick: () => viewConflicts(true) }, "Re-scan corpus")),
+        el("button", { class: "btn primary", onclick: () => viewConflicts(T, true) }, "Re-scan corpus")),
       el("div", { class: "note" },
         "A deliberately over-sensitive detector — shared entities plus negation cues plus "
         + "numeric divergence. These are candidates, never verdicts. Dismissing a false "
@@ -654,13 +676,13 @@ async function viewConflicts(scan) {
   ]);
   async function resolve(id, status) {
     await api("/api/conflicts/resolve", { body: { id, status } });
-    viewConflicts(false); api("/api/stats").then(refreshBadges);
+    viewConflicts(T, false); api("/api/today").then(d => refreshBadges(d.stats||{}, d.science||{}));
   }
 }
 
 // ----------------------------------------------------------------- models
-async function viewModels() {
-  busy();
+async function viewModels(T) {
+  busy(T);
   const r = await api("/api/models");
   const env = r.environment || {};
   const rows = (r.models || []).map(m => el("div", { class: "card" },
@@ -676,7 +698,7 @@ async function viewModels() {
     m.caveat && el("div", { class: "note warn" }, el("b", {}, "Caveat: "), m.caveat),
     m.install && !m.available && el("div", { class: "diff" }, m.install)));
 
-  setMain([
+  into(T, [
     ...head("Model registry", "What exists for this work, whether you can run it here, "
       + "and — the part most model lists omit — when not to use it."),
     el("div", { class: "card" }, el("div", { class: "row" },
@@ -686,20 +708,20 @@ async function viewModels() {
       ...(r.tasks || []).map(t => el("button", { class: "btn sm",
         onclick: async () => {
           const rr = await api("/api/models", { params: { task: t } });
-          setMain([...head("Model registry — " + t, rr.guidance || ""),
+          into(T, [...head("Model registry — " + t, rr.guidance || ""),
             ...(rr.models || []).map(m => el("div", { class: "card" },
               el("b", {}, m.name), " ", el("span", { class: "pill " + (m.available ? "ok" : "") },
                 m.available ? "installed" : "not installed"),
               el("p", { class: "sub", style: "margin:8px 0" }, m.summary),
               m.caveat && el("div", { class: "note warn" }, m.caveat))),
-            el("button", { class: "btn", onclick: viewModels }, "← all models")]);
+            el("button", { class: "btn", onclick: () => viewModels(T) }, "← all models")]);
         } }, t)))),
     ...rows,
   ]);
 }
 
 // ------------------------------------------------------------------ tools
-async function viewTools() {
+async function viewTools(T) {
   const prot = el("textarea", { placeholder: "Protein sequence (one-letter code)" });
   const pos = el("input", { type: "number", placeholder: "position (1-based)", value: "12" });
   const mut = el("input", { placeholder: "mutant residue, e.g. D", value: "D" });
@@ -758,7 +780,7 @@ async function viewTools() {
       r.note && el("div", { class: "note " + (r.valid ? "" : "warn") }, r.note)));
   }
 
-  setMain([
+  into(T, [
     ...head("Peptide tools", "The operations around the models — where an off-by-one "
       + "silently produces a peptide that does not exist."),
     el("div", { class: "card" },
@@ -790,8 +812,8 @@ async function viewTools() {
 }
 
 // ------------------------------------------------------------------ learn
-async function viewLearn() {
-  busy();
+async function viewLearn(T) {
+  busy(T);
   const [q, c] = await Promise.all([api("/api/quiz", { params: { n: 30 } }), api("/api/curriculum")]);
   const area = el("div", {});
   let i = 0;
@@ -819,7 +841,7 @@ async function viewLearn() {
       back, grades));
   }
 
-  setMain([
+  into(T, [
     ...head("Learn", "Spaced repetition over your own corpus, and the curriculum."),
     el("div", { class: "card" },
       el("h2", { style: "margin-top:0" }, "Due today"),
@@ -832,10 +854,10 @@ async function viewLearn() {
 }
 
 // ----------------------------------------------------------------- digest
-async function viewDigest() {
-  busy();
+async function viewDigest(T) {
+  busy(T);
   const r = await api("/api/digest", { params: { n: 3 } });
-  setMain([
+  into(T, [
     ...head("Digests", "What each sweep found, newest first."),
     (r.digests || []).length ? r.digests.map(d => el("div", { class: "card" },
       el("h2", { style: "margin-top:0" }, d.date),
@@ -845,22 +867,425 @@ async function viewDigest() {
   ]);
 }
 
+
+// ============================================================ THE SIX TABS
+// Each is a stage of the research loop. The old feature-tabs became lenses
+// inside the stage where you would actually reach for them.
+
+// ------------------------------------------------------------------ today
+async function viewToday(T) {
+  busy(T);
+  const d = await api("/api/today");
+  const s = d.stats || {}, sci = d.science || {};
+  const nodes = [...head("Today", "What changed, what needs a decision, and what the work needs next.")];
+
+  // 1. What the WORK needs — before anything about the literature. The most
+  //    common failure of a research tool is telling you about papers when what
+  //    you actually owe is a result you never wrote down.
+  const next = d.next || [];
+  nodes.push(el("div", { class: "card" },
+    el("h2", { style: "margin-top:0" }, "What the work needs"),
+    next.length ? next.slice(0, 6).map(n => el("div", { class: "hit" },
+      el("div", { class: "t" }, el("span", { class: "pill acc" }, n.kind), " ", n.what),
+      el("div", { class: "m" }, n.why, n.project ? " · " + n.project : ""))) :
+      el("div", { class: "empty" },
+        sci.projects ? "Nothing outstanding." :
+        "No projects yet. Open one in Projects — the brain works much better when it knows what you are trying to find out."),
+  ));
+
+  // 2. What needs YOUR decision.
+  const ny = d.needs_you || {};
+  const decisions = (ny.proposals || []).length + (ny.conflicts || []).length + (ny.beliefs_due || []).length;
+  if (decisions) {
+    nodes.push(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Needs your decision"),
+      (ny.proposals || []).map(x => el("div", { class: "hit" },
+        el("div", { class: "t" }, el("span", { class: "pill warn" }, "memory edit"), " ", x.target),
+        el("div", { class: "m" }, x.rationale))),
+      (ny.conflicts || []).map(x => el("div", { class: "hit" },
+        el("div", { class: "t" }, el("span", { class: "pill bad" }, "possible contradiction"), " ", x.claim),
+        el("div", { class: "m" }, x.cue))),
+      (ny.beliefs_due || []).map(x => el("div", { class: "hit" },
+        el("div", { class: "t" }, el("span", { class: "pill" }, "belief due"), " ", x.claim))),
+      el("div", { class: "row", style: "margin-top:10px" },
+        el("button", { class: "btn sm primary", onclick: () => go("memory") }, "Go to Memory")),
+    ));
+  }
+
+  // 3. Standing rules — things you already told it.
+  if ((d.rules || []).length) {
+    nodes.push(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Rules you have taught it"),
+      d.rules.map(r => el("div", { class: "hit" },
+        el("div", { class: "s" }, el("b", {}, "When "), r.trigger, " → ", r.action)))));
+  }
+
+  // 4. Corpus state, compact — the least important thing on this page.
+  nodes.push(el("div", { class: "grid g4" },
+    el("div", { class: "stat" }, el("div", { class: "n" }, num(sci.hypotheses_open || 0)),
+      el("div", { class: "l" }, "open hypotheses")),
+    el("div", { class: "stat" }, el("div", { class: "n" }, num(sci.awaiting_result || 0)),
+      el("div", { class: "l" }, "awaiting a result")),
+    el("div", { class: "stat" }, el("div", { class: "n" }, num(s.papers || 0)),
+      el("div", { class: "l" }, "papers"), el("div", { class: "h" }, num(s.journal || 0) + " memories")),
+    el("div", { class: "stat" }, el("div", { class: "n" }, num(s.cards_due || 0)),
+      el("div", { class: "l" }, "cards due")),
+  ));
+
+  if (d.changed?.digest) {
+    nodes.push(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "New in the literature — " + (d.changed.digest_date || "")),
+      el("div", { class: "scroll" }, el("pre", { class: "md" }, d.changed.digest))));
+  }
+  if ((d.recent_memory || []).length) {
+    nodes.push(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Recently remembered"),
+      d.recent_memory.map(m => el("div", { class: "hit" },
+        el("div", { class: "m" }, el("span", { class: "pill" }, m.kind), " ",
+          String(m.at).slice(0, 10)),
+        el("div", { class: "s" }, m.text)))));
+  }
+
+  into(T, nodes);
+  refreshBadges(s, sci);
+}
+
+// -------------------------------------------------------------------- ask
+function panelAnswer(T) {
+  const q = el("input", { placeholder: "e.g. does class II inclusion improve durable responses?",
+    onkeydown: e => { if (e.key === "Enter") run(); } });
+  const out = el("div", {});
+  async function run() {
+    if (!q.value.trim()) return;
+    busy(out, "assembling evidence");
+    const r = await api("/api/answer", { params: { q: q.value.trim() } });
+    const cov = r.coverage || {};
+    out.replaceChildren(el("div", {},
+      el("div", { class: "card" },
+        el("div", { class: "row", style: "justify-content:space-between" },
+          el("b", {}, "Evidence strength"),
+          el("span", { class: "pill " + (/established/.test(r.evidence_strength) ? "ok" :
+            /no evidence/.test(r.evidence_strength) ? "bad" : "warn") }, r.evidence_strength)),
+        el("div", { class: "m", style: "font-size:12.5px;margin-top:8px;color:var(--faint)" },
+          `${r.n_passages} passages · ${r.n_sources} distinct sources · tiers ` +
+          (Object.entries(r.tier_spread || {}).map(([t, n]) => `${t}:${n}`).join(" ") || "ungraded")),
+        cov.papers_mentioning !== undefined ? el("div", { class: "note" },
+          `Corpus coverage: ${cov.papers_mentioning} papers mention "${(cov.query_terms||[])[0]||""}" ` +
+          `(${cov.oldest || "?"} – ${cov.newest || "?"}). ` +
+          (cov.papers_mentioning === 0
+            ? "Nothing here — do not read that as the literature disagreeing."
+            : "")) : null,
+        (r.existing_beliefs || []).length ? el("div", { class: "note warn" },
+          "You already believe: " + r.existing_beliefs.map(b => b.claim).join(" · ") +
+          " — if the passages below disagree, say so rather than asserting both.") : null),
+      ...(r.passages || []).map((pg, i) => el("div", { class: "card" },
+        el("div", { class: "t" }, `[${i + 1}] `,
+          pg.url ? el("a", { href: pg.url, target: "_blank", rel: "noopener" }, pg.title) : pg.title),
+        el("div", { class: "m" }, pg.citation, " · § ", pg.section || "—", " · ",
+          el("span", { class: "pill acc" }, (pg.retrieved_via || []).join("+")),
+          pg.tier !== null && pg.tier !== undefined ? " " : "",
+          pg.tier !== null && pg.tier !== undefined
+            ? el("span", { class: "pill " + (pg.tier >= 4 ? "ok" : pg.tier <= 1 ? "warn" : "") },
+                "tier " + pg.tier + "/5") : null),
+        el("div", { class: "s" }, pg.passage))),
+      r.bibtex ? el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "Citations for exactly these sources"),
+        el("div", { class: "diff" }, r.bibtex),
+        el("button", { class: "btn sm", onclick: () => navigator.clipboard?.writeText(r.bibtex) },
+          "Copy BibTeX")) : null,
+      el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "How to use this"),
+        el("ul", { style: "margin:0;padding-left:20px;font-size:13.5px;color:var(--muted)" },
+          ...(r.instructions || []).map(x => el("li", { style: "margin:5px 0" }, x))))));
+  }
+  into(T, el("div", { class: "card" },
+    el("div", { class: "row" }, q, el("button", { class: "btn primary", onclick: run }, "Assemble")),
+    el("div", { class: "note" },
+      "This assembles the evidence and computes the strength, coverage and citations. " +
+      "The prose answer is your model's job — the parts that can be dangerously wrong " +
+      "are computed here rather than generated.")), out);
+}
+
+function panelCheck(T) {
+  const box = el("textarea", { placeholder:
+    "Paste a sentence from your draft, or a paragraph.\ne.g. Neoantigen vaccines improve survival in pancreatic cancer.",
+    style: "min-height:110px" });
+  const out = el("div", {});
+  const verdictPill = v => ({
+    "likely-supported": "ok", "possibly-contradicted": "bad", "disputed": "warn",
+    "no-evidence": "", "needs-review": "warn", "unverifiable-number": "warn" }[v] || "");
+
+  const renderOne = r => el("div", { class: "card" },
+    el("div", { class: "row", style: "justify-content:space-between;align-items:flex-start" },
+      el("div", { style: "flex:1;font-weight:600" }, "“" + r.claim + "”"),
+      el("span", { class: "pill " + verdictPill(r.verdict) }, r.verdict)),
+    el("div", { class: "note" }, r.note),
+    (r.passages || []).length ? el("div", {},
+      el("div", { class: "m", style: "margin:10px 0 4px;font-size:12px;color:var(--faint)" },
+        "PASSAGES THAT BEAR ON THIS — read them; the verdict only tells you where to look"),
+      ...r.passages.slice(0, 4).map(x => el("div", { class: "hit" },
+        el("div", { class: "t" },
+          x.url ? el("a", { href: x.url, target: "_blank", rel: "noopener" }, x.title) : x.title,
+          x.tier !== null && x.tier !== undefined ? " " : "",
+          x.tier !== null && x.tier !== undefined
+            ? el("span", { class: "pill " + (x.tier >= 4 ? "ok" : "") }, "tier " + x.tier + "/5") : null),
+        (x.signals?.notes || []).length
+          ? el("div", { class: "m" }, x.signals.notes.join("; ")) : null,
+        el("div", { class: "s" }, x.passage)))) : null,
+    el("div", { class: "note" }, r.method));
+
+  async function run(draft) {
+    if (!box.value.trim()) return;
+    busy(out, "checking against your corpus");
+    const r = await api("/api/check", { body: { claim: box.value, draft: !!draft } });
+    out.replaceChildren(r.checks
+      ? el("div", {}, r.checks.length
+          ? r.checks.map(renderOne)
+          : el("div", { class: "card" }, el("div", { class: "empty" },
+              "No checkable factual sentences found in that text.")))
+      : renderOne(r));
+  }
+
+  into(T, el("div", { class: "card" }, box,
+    el("div", { class: "row", style: "margin-top:9px" },
+      el("button", { class: "btn primary", onclick: () => run(false) }, "Check this claim"),
+      el("button", { class: "btn", onclick: () => run(true) }, "Check every sentence")),
+    el("div", { class: "note warn" },
+      "This is lexical analysis over YOUR corpus, not entailment detection and not " +
+      "a truth test. It reliably tells you when your corpus says nothing, when a " +
+      "number has no source, and which passages to read before you submit the sentence.")),
+    out);
+}
+
+async function viewAsk(T) {
+  shell("Ask", "A question becomes a cited answer; a sentence in your draft becomes a list of things to read before you submit it.",
+    [{ id: "answer", label: "Answer a question", render: panelAnswer },
+     { id: "check", label: "Check a claim / draft", render: panelCheck },
+     { id: "evidence", label: "Raw evidence pack", render: viewSearch }]);
+}
+
+// --------------------------------------------------------------- projects
+async function viewProjects(T) {
+  busy(T);
+  const d = await api("/api/projects");
+  const out = el("div", {});
+
+  const newProject = () => {
+    const name = el("input", { placeholder: "short name, e.g. class II inclusion" });
+    const question = el("input", { placeholder: "the one question this project answers" });
+    return el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Open a project"),
+      el("div", { class: "row" }, name, question,
+        el("button", { class: "btn primary", onclick: async () => {
+          if (!name.value.trim()) return;
+          await api("/api/projects/create", { body: { name: name.value, question: question.value } });
+          viewProjects(T);
+        } }, "Create")),
+      el("div", { class: "note" },
+        "A project is a question you are trying to answer, not a folder. Everything " +
+        "else — hypotheses, experiments, decisions, the evidence you link — hangs off it."));
+  };
+
+  const hypForm = (projectId) => {
+    const st = el("input", { placeholder: "hypothesis: a statement that could be wrong" });
+    const fals = el("input", { placeholder: "falsifier: what observation would make you abandon it?" });
+    const err = el("div", {});
+    return el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Add a hypothesis"),
+      st, el("div", { style: "height:8px" }), fals,
+      el("div", { class: "row", style: "margin-top:9px" },
+        el("button", { class: "btn primary", onclick: async () => {
+          const r = await api("/api/hypothesis", { body: {
+            statement: st.value, falsifier: fals.value, project_id: projectId } });
+          if (r.error) err.replaceChildren(el("div", { class: "note warn" }, r.error));
+          else viewProjects(T);
+        } }, "Add")),
+      el("div", { class: "note" },
+        "The falsifier is required. A hypothesis you cannot imagine disconfirming is " +
+        "a belief — record it in Memory instead, where it gets reviewed against the literature."),
+      err);
+  };
+
+  const expForm = (projectId, hypothesisId) => {
+    const title = el("input", { placeholder: "experiment title" });
+    const design = el("input", { placeholder: "design: model, groups, n, endpoint" });
+    const pred = el("textarea", { placeholder:
+      "prediction — specific enough that the result could contradict it", style: "min-height:64px" });
+    const err = el("div", {});
+    return el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Plan an experiment"),
+      title, el("div", { style: "height:8px" }), design,
+      el("div", { style: "height:8px" }), pred,
+      el("div", { class: "row", style: "margin-top:9px" },
+        el("button", { class: "btn primary", onclick: async () => {
+          const r = await api("/api/experiment", { body: { title: title.value,
+            design: design.value, prediction: pred.value,
+            project_id: projectId, hypothesis_id: hypothesisId } });
+          if (r.error) err.replaceChildren(el("div", { class: "note warn" }, r.error));
+          else viewProjects(T);
+        } }, "Register")),
+      el("div", { class: "note" },
+        "The prediction is recorded now, before the result exists. This is " +
+        "pre-registration at the scale of one bench scientist: it costs thirty " +
+        "seconds and it is the difference between “we found what we expected” " +
+        "and knowing whether you actually did."),
+      err);
+  };
+
+  const resultForm = (exp) => {
+    const res = el("textarea", { placeholder: "what actually happened", style: "min-height:64px" });
+    const outcome = el("select", {}, ...["as_predicted", "contradicted", "ambiguous", "failed"]
+      .map(o => el("option", { value: o }, o.replace("_", " "))));
+    const fb = el("div", {});
+    return el("div", { class: "card" },
+      el("div", { class: "m" }, "Predicted: ", el("b", {}, exp.prediction)),
+      res, el("div", { class: "row", style: "margin-top:9px" }, outcome,
+        el("button", { class: "btn primary", onclick: async () => {
+          const r = await api("/api/experiment/update", { body: {
+            id: exp.id, result: res.value, outcome: outcome.value } });
+          fb.replaceChildren(el("div", { class: "note warn" }, r.prompt || "recorded"));
+          setTimeout(() => viewProjects(T), 2200);
+        } }, "Record result")),
+      fb);
+  };
+
+  const nodes = [...head("Projects",
+    "The work: what you are trying to find out, what you predicted, and what actually happened.")];
+
+  if (!(d.projects || []).length) {
+    nodes.push(el("div", { class: "card" }, el("div", { class: "empty" },
+      "No projects yet. This is the part that makes NeoBrain your brain rather than a literature tool — " +
+      "without it, nothing knows what you are trying to find out.")));
+    nodes.push(newProject());
+  } else {
+    for (const proj of d.projects) {
+      const detail = el("div", {});
+      nodes.push(el("div", { class: "card" },
+        el("div", { class: "row", style: "justify-content:space-between" },
+          el("div", {}, el("b", { style: "font-size:16px" }, proj.name),
+            el("div", { class: "sub", style: "margin:4px 0 0" }, proj.question || "")),
+          el("div", { class: "row" },
+            el("span", { class: "pill" }, (proj.counts?.open_hypotheses || 0) + " open"),
+            el("span", { class: "pill " + ((proj.counts?.awaiting_result || 0) ? "warn" : "") },
+              (proj.counts?.awaiting_result || 0) + " awaiting result"),
+            (proj.counts?.surprises || 0)
+              ? el("span", { class: "pill bad" }, proj.counts.surprises + " surprises") : null)),
+        el("div", { class: "row", style: "margin-top:10px" },
+          el("button", { class: "btn sm", onclick: async () => {
+            const st = await api("/api/projects", { params: { id: proj.id } });
+            detail.replaceChildren(
+              ...(st.hypotheses || []).map(h => el("div", { class: "card" },
+                el("div", { class: "t" }, el("span", { class: "pill " +
+                  (h.status === "open" ? "" : h.status === "refuted" ? "bad" : "ok") }, h.status),
+                  " ", h.statement),
+                el("div", { class: "m" }, "falsified by: ", h.falsifier || "—"),
+                ...(h.experiments || []).map(x => el("div", { class: "m" },
+                  `  experiment #${x.id} ${x.title} — ${x.status}` +
+                  (x.outcome ? ` (${x.outcome})` : ""))),
+                expForm(proj.id, h.id))),
+              ...(st.experiments || []).filter(x => x.status === "running" && !x.result)
+                .map(x => el("div", {},
+                  el("h2", {}, "Result for #" + x.id + " " + x.title), resultForm(x))),
+              hypForm(proj.id));
+          } }, "Open"))),
+        detail);
+    }
+    nodes.push(newProject());
+  }
+  into(T, nodes);
+}
+
+// ---------------------------------------------------------------- library
+async function viewLibrary(T) {
+  shell("Library", "What you have read, what is new, and how it connects.",
+    [{ id: "search", label: "Search", render: viewSearch },
+     { id: "digest", label: "What's new", render: viewDigest },
+     { id: "graph", label: "Connections", render: viewGraph }]);
+}
+
+// ------------------------------------------------------------------ bench
+function panelClinic(T) {
+  const tumour = el("input", { placeholder: "tumour type, e.g. pancreatic adenocarcinoma" });
+  const variants = el("input", { placeholder: "variants, comma separated: KRAS G12D, TP53 R175H" });
+  const hla = el("input", { placeholder: "HLA, comma separated: HLA-A*02:01, HLA-C*08:02" });
+  const tmb = el("input", { placeholder: "TMB /Mb (optional)", type: "number" });
+  const msi = el("input", { placeholder: "MSI status (optional)" });
+  const out = el("div", {});
+
+  async function run() {
+    busy(out, "screening");
+    const r = await api("/api/clinic/screen", { body: {
+      tumour_type: tumour.value,
+      variants: variants.value.split(",").map(x => x.trim()).filter(Boolean),
+      hla: hla.value.split(",").map(x => x.trim()).filter(Boolean),
+      tmb: tmb.value ? Number(tmb.value) : null, msi: msi.value } });
+    out.replaceChildren(el("div", {},
+      el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "Actionability (ESCAT)"),
+        el("table", {}, el("tr", {}, ...["tier", "alteration", "meaning"].map(h => el("th", {}, h))),
+          ...(r.actionability || []).map(a => el("tr", {},
+            el("td", {}, el("span", { class: "pill " +
+              (/^I/.test(a.escat) ? "ok" : /^II/.test(a.escat) ? "warn" : "") }, a.escat)),
+            el("td", {}, a.variant),
+            el("td", {}, el("div", {}, a.escat_meaning),
+              el("div", { class: "m", style: "margin-top:4px" }, a.note)))))),
+      (r.flags || []).length ? el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, "Flags"),
+        ...r.flags.map(f => el("div", { class: "note warn" }, f))) : null,
+      el("div", { class: "card" },
+        el("h2", { style: "margin-top:0" }, `Candidate trials (${(r.trials || []).length})`),
+        (r.trials || []).length ? (r.trials).map(t => el("div", { class: "hit" },
+          el("div", { class: "t" }, el("a", { href: t.url, target: "_blank", rel: "noopener" },
+            t.nct_id), " — ", t.title),
+          el("div", { class: "m" }, t.status, " · ", t.phase || "phase n/a", " · ", t.sponsor),
+          el("div", { class: "s" }, "matched because: ", (t.why || []).join(", "))))
+          : el("div", { class: "empty" }, r.corpus?.note || "No matches."),
+        el("div", { class: "note warn" }, (r.limits || []).join(" "))),
+    ));
+  }
+
+  into(T, el("div", { class: "card" },
+    el("div", { class: "note warn" },
+      "A SEARCH AID, NOT AN ELIGIBILITY DETERMINATION. Nothing here is a treatment " +
+      "recommendation. Use de-identified profiles only."),
+    tumour, el("div", { style: "height:8px" }), variants,
+    el("div", { style: "height:8px" }), hla,
+    el("div", { class: "row", style: "margin-top:8px" }, tmb, msi,
+      el("button", { class: "btn primary", onclick: run }, "Screen"))), out);
+}
+
+async function viewBench(T) {
+  shell("Bench", "The tools you reach for while doing the work.",
+    [{ id: "peptides", label: "Peptides & constructs", render: viewTools },
+     { id: "models", label: "Model registry", render: viewModels },
+     { id: "clinic", label: "Molecular screen", render: panelClinic }]);
+}
+
+// ----------------------------------------------------------------- memory
+async function viewMemory(T) {
+  shell("Memory", "What it remembers, what it believes, and what it wants your approval for.",
+    [{ id: "review", label: "Needs approval", render: viewReview },
+     { id: "conflicts", label: "Conflicts", render: t => viewConflicts(t, false) },
+     { id: "journal", label: "Journal", render: viewJournal },
+     { id: "beliefs", label: "Beliefs & rules", render: viewBeliefs },
+     { id: "learn", label: "Learn", render: viewLearn }]);
+}
+
 // ------------------------------------------------------------------ router
-const VIEWS = { overview: viewOverview, search: viewSearch, graph: viewGraph,
-  digest: viewDigest, journal: viewJournal, beliefs: viewBeliefs, review: viewReview,
-  conflicts: () => viewConflicts(false), models: viewModels, tools: viewTools, learn: viewLearn };
+const VIEWS = { today: viewToday, ask: viewAsk, projects: viewProjects,
+  library: viewLibrary, bench: viewBench, memory: viewMemory };
 
 function go(name) {
   document.querySelectorAll("nav button[data-v]").forEach(b =>
     b.classList.toggle("on", b.dataset.v === name));
   location.hash = name;
-  (VIEWS[name] || viewOverview)();
+  (VIEWS[name] || viewToday)(null);
 }
 document.querySelectorAll("nav button[data-v]").forEach(b =>
   b.addEventListener("click", () => go(b.dataset.v)));
-window.addEventListener("hashchange", () => go(location.hash.slice(1) || "overview"));
-go(location.hash.slice(1) || "overview");
-api("/api/stats").then(refreshBadges).catch(() => {});
+window.addEventListener("hashchange", () => go(location.hash.slice(1) || "today"));
+go(location.hash.slice(1) || "today");
+api("/api/today").then(d => refreshBadges(d.stats || {}, d.science || {})).catch(() => {});
 </script>
 </body>
 </html>

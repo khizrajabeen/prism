@@ -7,25 +7,27 @@ night, stores everything in a database you own, learns what you care about,
 remembers your project across sessions, teaches you the field, and refuses to
 tell you anything it cannot source.
 
+NeoBrain is built around the loop researchers actually run, not around a list
+of features:
+
 ```
-                    ┌────────────────────────────────────────────┐
-   Europe PMC ─┐    │ sweep → score → grade → graph → contradict  │
-   bioRxiv     ├───▶│                                            │
-   medRxiv     │    │                  brain.db                  │
-   CT.gov      ┘    │  papers · full text · trials · entities    │
-                    │  journal(append-only) · beliefs(versioned) │
-   your PDFs ──────▶│  rules · conflicts · cards · provenance    │
-                    └─────────────────────┬──────────────────────┘
-                                          │
-              hybrid retrieval:  BM25 + vectors + entity graph → RRF
-                                          │
-                    ┌─────────────────────▼──────────────────────┐
-                    │  CLI        dashboard        MCP server    │
-                    │  neobrain   localhost:8787   35 tools      │
-                    └─────────────────────┬──────────────────────┘
-                                          │
-                            your model, grounded and cited
+        ┌───────────┐     ┌────────────┐     ┌──────────────┐
+        │ QUESTION  │────▶│  EVIDENCE  │────▶│  HYPOTHESIS  │
+        │   Ask     │     │  Library   │     │  (falsifier  │
+        └───────────┘     └────────────┘     │   required)  │
+              ▲                              └──────┬───────┘
+              │                                     │
+      ┌───────┴──────┐    ┌──────────┐    ┌─────────▼────────┐
+      │    BELIEF    │◀───│  RESULT  │◀───│    EXPERIMENT    │
+      │  versioned,  │    │ vs the   │    │ prediction saved │
+      │ never erased │    │prediction│    │ BEFORE it runs   │
+      └──────────────┘    └──────────┘    └──────────────────┘
+             Memory                            Projects
 ```
+
+Every table in the database attaches to a node of that loop. A capability that
+attaches to none of them is a utility, not part of the brain — that is the test
+this design applies to itself.
 
 ---
 
@@ -48,32 +50,41 @@ every answer afterwards, because it is the difference between an assistant that
 knows you are a second-year PhD student with no wet lab access and one that
 guesses.
 
-## What you get
+## How it helps, by what you are doing
 
-| | |
-|---|---|
-| **Live literature** | Europe PMC (journals **and** preprints), bioRxiv/medRxiv direct feed, ClinicalTrials.gov v2 with **status-change history** |
-| **Full text, not just abstracts** | Open-access papers are pulled as structured sections — the Methods are where the protocol detail lives |
-| **Your own PDFs** | Save a paywalled paper into `inbox/`, ingest it into the same tables |
-| **Hybrid retrieval** | BM25 + optional local vectors + an entity graph, fused by reciprocal rank |
-| **Multi-hop reasoning** | Questions whose answer spans papers, via graph-seeded retrieval |
-| **Memory that cannot be erased** | An append-only journal the database itself refuses to mutate |
-| **Beliefs that change without forgetting** | Bitemporal versioning: superseded, never overwritten |
-| **Procedural memory** | Rules learned from your corrections, surfaced every session |
-| **Contradiction detection** | New evidence is scanned against what you believe, and tensions are queued |
-| **Evidence grading** | Every source gets a tier, so "established" and "one preprint" stop looking alike |
-| **An approval gate** | The agent proposes curated memory edits; you approve diffs |
-| **A curriculum** | Ten modules from antigen presentation to study design, each with a checkpoint task |
-| **Spaced repetition** | SM-2 cards built from your own reading |
-| **A local dashboard** | Ten views, single-file HTML, stdlib server, binds localhost only |
-| **A model registry** | ~20 biology models with licences, hardware needs, and honest caveats |
-| **Peptide tools** | Mutant windows with WT controls, junctional neoepitopes, HLA validation |
-| **Agent tools** | An MCP server exposing 35 tools to Claude Desktop / Claude Code / any client |
+| You are… | You open | What it does that a search engine does not |
+|---|---|---|
+| **asking a question** | `Ask` | Assembles the passages, grades their evidence tier, states how well your corpus even covers the topic, flags beliefs you already hold that disagree, and exports BibTeX for exactly the sources used |
+| **writing a draft** | `Ask → Check` | Takes a sentence and shows the passages from *your own library* that bear on it, flags quantitative claims with no quantitative source, and tells you plainly when the corpus says nothing |
+| **running a project** | `Projects` | Holds your hypotheses (each with a required falsifier) and experiments (each with the prediction recorded **before** the result), so a surprising result stays surprising |
+| **at the bench** | `Bench` | Mutant peptide windows with WT controls, junctional neoepitopes in a construct, HLA validation, and a model registry that tells you what runs on *this* machine |
+| **in a tumour board** | `Bench → Molecular screen` | ESCAT actionability tiers, HLA-restriction flags, B2M/JAK exclusion signals, and candidate trials — explicitly a search aid, never an eligibility determination |
+| **keeping current** | `Today` | What the *work* needs first, then what needs your decision, then what is new in the literature |
+| **not wanting to forget** | `Memory` | An append-only journal the database refuses to edit, beliefs versioned rather than overwritten, and rules learned from your corrections |
 
-Two dependencies (`requests`, `PyYAML`). Everything else is optional and the
-system degrades gracefully without it.
+Everything is local, two dependencies (`requests`, `PyYAML`), and it degrades
+gracefully without the optional extras.
 
----
+## The web portal: six tabs, not eleven
+
+An earlier version had eleven tabs — entity graph, digest, conflicts, review,
+models, quiz, and so on. Each was defensible; together they made no sense,
+because they were named after **mechanisms** rather than after anything a
+researcher sets out to do. Nobody wakes up wanting to use an entity graph.
+
+The redesign is one tab per stage of the loop:
+
+| Tab | Stage | What moved inside it |
+|---|---|---|
+| **Today** | the inbox | overview + digest + the approval and conflict queues |
+| **Ask** | question → answer | answer composer, claim/draft checking, raw evidence packs |
+| **Projects** | hypothesis → experiment → result | *new* — the spine that was missing |
+| **Library** | evidence | search, what's new, the entity graph as a lens |
+| **Bench** | doing the work | peptides, model registry, molecular screen |
+| **Memory** | belief | approvals, conflicts, journal, beliefs, rules, spaced repetition |
+
+The graph did not get deleted — it stopped being a destination and became a
+lens inside Library, which is where you would actually reach for it.
 
 ## The dashboard
 

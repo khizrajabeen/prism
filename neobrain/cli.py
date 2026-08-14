@@ -16,7 +16,8 @@ from pathlib import Path
 from sqlite3 import connect as sqlite3_connect
 
 from . import (
-    config, db, digest, evidence, graph, journal, memory, retrieve, scoring, tutor,
+    answer, clinic, config, db, digest, evidence, graph, journal, memory, retrieve,
+    science, scoring, tutor,
 )
 from .sources import local as local_src
 
@@ -780,6 +781,176 @@ def cmd_peptide(args) -> int:
     return 0
 
 
+
+def cmd_project(args) -> int:
+    con = db.connect()
+    try:
+        if args.action == "new":
+            pid = science.create_project(con, args.name, args.question or "", args.deadline or "")
+            print(f"project #{pid} '{args.name}'")
+        elif args.action == "list":
+            projects = science.get_projects(con, status=args.status)
+            if not projects:
+                print("No projects. Open one:\n  neobrain project new '<name>' --question '<the question>'")
+            for pr in projects:
+                st = science.project_status(con, pr["id"])["counts"]
+                print(_c(f"#{pr['id']} {pr['name']}", BOLD))
+                print(f"    {pr['question'] or '(no question set)'}")
+                print(_c(f"    {st['open_hypotheses']} open hypotheses · {st['awaiting_result']} "
+                         f"awaiting result · {st['surprises']} surprises", DIM))
+        elif args.action == "status":
+            st = science.project_status(con, args.id)
+            if not st:
+                print(f"no project #{args.id}")
+                return 1
+            print(_c(st["project"]["name"], BOLD))
+            print(f"  {st['project']['question'] or ''}\n")
+            for h in st["hypotheses"]:
+                print(_c(f"  [{h['status']}] #{h['id']} {h['statement']}", BOLD))
+                print(_c(f"      falsified by: {h['falsifier']}", DIM))
+                for x in h["experiments"]:
+                    print(f"      experiment #{x['id']} {x['title']} — {x['status']}"
+                          + (f" ({x['outcome']})" if x["outcome"] else ""))
+            for d in st["decisions"]:
+                print(f"  decision: {d['decision']}")
+    finally:
+        con.close()
+    return 0
+
+
+def cmd_hypothesis(args) -> int:
+    con = db.connect()
+    try:
+        if args.action == "add":
+            hid = science.add_hypothesis(
+                con, args.statement, project_id=args.project,
+                rationale=args.rationale or "", falsifier=args.falsifier,
+                prior=args.prior or "")
+            print(f"hypothesis #{hid}")
+        elif args.action == "resolve":
+            science.resolve_hypothesis(con, args.id, args.status,
+                                       resolution=args.resolution or "",
+                                       posterior=args.posterior or "")
+            print(f"hypothesis #{args.id} → {args.status}")
+        elif args.action == "list":
+            for h in science.get_hypotheses(con, project_id=args.project, status=args.status):
+                print(_c(f"[{h['status']}] #{h['id']} {h['statement']}", BOLD))
+                print(_c(f"    falsified by: {h['falsifier']}", DIM))
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        con.close()
+    return 0
+
+
+def cmd_experiment(args) -> int:
+    con = db.connect()
+    try:
+        if args.action == "plan":
+            eid = science.plan_experiment(
+                con, args.title, project_id=args.project, hypothesis_id=args.hypothesis,
+                design=args.design or "", prediction=args.prediction)
+            print(f"experiment #{eid} — prediction is on the record before the result exists")
+        elif args.action == "start":
+            con.execute("UPDATE experiments SET status='running', started_at=? WHERE id=?",
+                        (db.now(), args.id))
+            con.commit()
+            print(f"experiment #{args.id} running")
+        elif args.action == "result":
+            r = science.record_result(con, args.id, args.result, outcome=args.outcome,
+                                      surprise=args.surprise)
+            print(_c(f"predicted: {r['predicted']}", DIM))
+            print(_c(f"observed:  {r['observed']}", BOLD))
+            print(textwrap.fill(r["prompt"], width=92, initial_indent="\n  ",
+                                subsequent_indent="  "))
+        elif args.action == "list":
+            for e in science.get_experiments(con, project_id=args.project, status=args.status):
+                print(_c(f"[{e['status']}] #{e['id']} {e['title']}", BOLD))
+                print(_c(f"    predicted: {e['prediction']}", DIM))
+                if e["result"]:
+                    print(f"    observed:  {e['result']}  → {e['outcome']}")
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        con.close()
+    return 0
+
+
+def cmd_next(args) -> int:
+    """What the work needs from you, across all projects."""
+    con = db.connect()
+    items = science.whats_next(con)
+    if not items:
+        s = science.stats(con)
+        print("Nothing outstanding." if s["projects"] else
+              "No projects yet — the brain works much better when it knows what you are\n"
+              "trying to find out:\n  neobrain project new '<name>' --question '<question>'")
+    for i in items:
+        print(_c(f"[{i['kind']}] {i['what']}", BOLD))
+        print(_c(f"    {i['why']}" + (f" · {i['project']}" if i["project"] else ""), DIM))
+    con.close()
+    return 0
+
+
+def cmd_check(args) -> int:
+    """Check a claim, or every sentence of a draft, against the corpus."""
+    con = db.connect()
+    text = (Path(args.claim).read_text(encoding="utf-8")
+            if Path(args.claim).exists() else args.claim)
+    if args.draft:
+        results = answer.check_draft(text, con=con)
+        if not results:
+            print("No checkable factual sentences found.")
+        for r in results:
+            print(answer.format_check(r))
+            print("─" * 92)
+    else:
+        print(answer.format_check(answer.check(text, con=con)))
+    con.close()
+    return 0
+
+
+def cmd_answer(args) -> int:
+    con = db.connect()
+    r = answer.compose(args.question, con=con, k=args.k)
+    print(_c(f"# {r['question']}", BOLD))
+    print(f"\nEvidence strength: {r['evidence_strength']}")
+    print(f"{r['n_passages']} passages · {r['n_sources']} sources · tiers "
+          + (", ".join(f"{t}:{n}" for t, n in r["tier_spread"].items()) or "ungraded"))
+    cov = r.get("coverage", {})
+    if cov.get("papers_mentioning") is not None:
+        print(_c(f"corpus coverage: {cov['papers_mentioning']} papers mention "
+                 f"'{(cov.get('query_terms') or [''])[0]}' ({cov.get('oldest')} – {cov.get('newest')})", DIM))
+    for b in r["existing_beliefs"]:
+        print(_c(f"  already believed: #{b['id']} {b['claim']}", DIM))
+    for i, pg in enumerate(r["passages"], 1):
+        tier = f" [tier {pg['tier']}/5]" if pg["tier"] is not None else ""
+        print(_c(f"\n[{i}] {pg['title']}{tier}", BOLD))
+        print(_c(f"    {pg['citation']}", DIM))
+        print(textwrap.fill(pg["passage"][:600], width=92,
+                            initial_indent="    ", subsequent_indent="    "))
+    if args.bibtex and r["bibtex"]:
+        print(_c("\n# citations", BOLD))
+        print(r["bibtex"])
+    con.close()
+    return 0
+
+
+def cmd_clinic(args) -> int:
+    con = db.connect()
+    profile = clinic.PatientProfile(
+        tumour_type=args.tumour or "",
+        variants=[v.strip() for v in (args.variants or "").split(",") if v.strip()],
+        hla=[h.strip() for h in (args.hla or "").split(",") if h.strip()],
+        tmb=args.tmb, msi=args.msi or "",
+    )
+    print(clinic.format_screen(clinic.screen(con, profile)))
+    con.close()
+    return 0
+
+
 def cmd_progress(args) -> int:
     con = db.connect()
     print(tutor.progress(con))
@@ -965,6 +1136,62 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--topic"); c.add_argument("--source")
     cs.add_parser("stats")
     p.set_defaults(func=cmd_card)
+
+    p = sub.add_parser("next", help="what the work needs from you, across all projects")
+    p.set_defaults(func=cmd_next)
+
+    p = sub.add_parser("project", help="the work: questions you are trying to answer")
+    prs = p.add_subparsers(dest="action", required=True)
+    a = prs.add_parser("new"); a.add_argument("name")
+    a.add_argument("--question"); a.add_argument("--deadline")
+    a = prs.add_parser("list"); a.add_argument("--status", default="active")
+    a = prs.add_parser("status"); a.add_argument("id", type=int)
+    p.set_defaults(func=cmd_project)
+
+    p = sub.add_parser("hypothesis", help="testable statements, with required falsifiers")
+    hs = p.add_subparsers(dest="action", required=True)
+    a = hs.add_parser("add"); a.add_argument("statement")
+    a.add_argument("--falsifier", required=True,
+                   help="what observation would make you abandon this?")
+    a.add_argument("--project", type=int); a.add_argument("--rationale"); a.add_argument("--prior")
+    a = hs.add_parser("resolve"); a.add_argument("id", type=int)
+    a.add_argument("status", choices=list(science.HYPOTHESIS_STATUS))
+    a.add_argument("--resolution"); a.add_argument("--posterior")
+    a = hs.add_parser("list"); a.add_argument("--project", type=int); a.add_argument("--status")
+    p.set_defaults(func=cmd_hypothesis)
+
+    p = sub.add_parser("experiment", help="experiments, with the prediction recorded first")
+    es = p.add_subparsers(dest="action", required=True)
+    a = es.add_parser("plan"); a.add_argument("title")
+    a.add_argument("--prediction", required=True,
+                   help="what you expect, specifically enough to be contradicted")
+    a.add_argument("--project", type=int); a.add_argument("--hypothesis", type=int)
+    a.add_argument("--design")
+    a = es.add_parser("start"); a.add_argument("id", type=int)
+    a = es.add_parser("result"); a.add_argument("id", type=int); a.add_argument("result")
+    a.add_argument("--outcome", choices=list(science.OUTCOMES), default="ambiguous")
+    a.add_argument("--surprise", type=int, default=0)
+    a = es.add_parser("list"); a.add_argument("--project", type=int); a.add_argument("--status")
+    p.set_defaults(func=cmd_experiment)
+
+    p = sub.add_parser("check", help="check a claim (or a whole draft) against the corpus")
+    p.add_argument("claim", help="a sentence, or a path to a file")
+    p.add_argument("--draft", action="store_true", help="check every sentence")
+    p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("answer", help="assemble a cited answer scaffold for a question")
+    p.add_argument("question")
+    p.add_argument("-k", type=int, default=12)
+    p.add_argument("--bibtex", action="store_true")
+    p.set_defaults(func=cmd_answer)
+
+    p = sub.add_parser("clinic", help="molecular screen: ESCAT tiers + trial matching (a search aid)")
+    p.add_argument("--tumour", "--tumor", dest="tumour")
+    p.add_argument("--variants", help="comma separated, e.g. 'KRAS G12D,B2M'")
+    p.add_argument("--hla", help="comma separated")
+    p.add_argument("--tmb", type=float)
+    p.add_argument("--msi")
+    p.set_defaults(func=cmd_clinic)
 
     p = sub.add_parser("web", help="run the local dashboard")
     p.add_argument("--host", default="127.0.0.1")

@@ -29,7 +29,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import config, db, digest, evidence, graph, journal, memory, retrieve, tutor
+from . import (answer, clinic, config, db, digest, evidence, graph, journal,
+               memory, retrieve, science, tutor)
 from .sources import fulltext as ft_mod
 
 # The SDK renamed its high-level server class in 2.0 (FastMCP → MCPServer).
@@ -618,6 +619,146 @@ def _server():
             return json.dumps(pep.normalize_hla(allele), indent=2)
         except pep.SequenceError as e:
             return f"error: {e}"
+
+
+    # ============================================================== THE WORK
+    @mcp.tool()
+    def whats_next() -> str:
+        """What the research actually needs from the user right now.
+
+        Call this alongside `brief` at session start. An experiment that
+        finished without a recorded result is the highest-priority item in the
+        system: the prediction is sitting unresolved and the memory of what
+        happened decays fastest.
+        """
+        con = db.connect()
+        try:
+            return json.dumps({"next": science.whats_next(con),
+                               "stats": science.stats(con)}, indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def get_projects(project_id: int = 0) -> str:
+        """The user's projects: their question, hypotheses, experiments, decisions."""
+        con = db.connect()
+        try:
+            if project_id:
+                return json.dumps(science.project_status(con, project_id), indent=2)
+            return json.dumps(science.get_projects(con), indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def add_hypothesis(statement: str, falsifier: str, project_id: int = 0,
+                       rationale: str = "", prior: str = "") -> str:
+        """Record a hypothesis. A falsifier is REQUIRED.
+
+        If the user cannot name an observation that would make them abandon the
+        idea, it is a belief rather than a hypothesis — propose it as a belief
+        instead. Do not invent a falsifier on their behalf; ask.
+        """
+        con = db.connect()
+        try:
+            hid = science.add_hypothesis(con, statement, project_id=project_id or None,
+                                         rationale=rationale, falsifier=falsifier, prior=prior)
+            return f"hypothesis #{hid} recorded"
+        except ValueError as e:
+            return f"refused: {e}"
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def plan_experiment(title: str, prediction: str, project_id: int = 0,
+                        hypothesis_id: int = 0, design: str = "") -> str:
+        """Register an experiment WITH its prediction, before it runs.
+
+        The prediction must be specific enough that the actual result could
+        contradict it. "We expect an effect" is not a prediction. This is
+        pre-registration at the scale of one bench scientist, and it is what
+        makes a surprising result stay surprising.
+        """
+        con = db.connect()
+        try:
+            eid = science.plan_experiment(
+                con, title, project_id=project_id or None,
+                hypothesis_id=hypothesis_id or None, design=design, prediction=prediction)
+            return f"experiment #{eid} registered with its prediction on the record"
+        except ValueError as e:
+            return f"refused: {e}"
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def record_result(experiment_id: int, result: str, outcome: str = "ambiguous",
+                      surprise: int = 0) -> str:
+        """Record what actually happened. outcome: as_predicted | contradicted |
+        ambiguous | failed. Returns the original prediction alongside it — read
+        both to the user before interpreting."""
+        con = db.connect()
+        try:
+            return json.dumps(science.record_result(
+                con, experiment_id, result, outcome=outcome, surprise=surprise), indent=2)
+        except ValueError as e:
+            return f"error: {e}"
+        finally:
+            con.close()
+
+    # ============================================================= ACCURACY
+    @mcp.tool()
+    def check_claim(claim: str, draft: bool = False) -> str:
+        """Check a sentence against the user's corpus before they publish it.
+
+        Use on anything going into a draft, and on your OWN factual statements
+        when they matter. Set draft=True to check every sentence of a paragraph.
+
+        The verdicts are deliberately hedged (likely-supported, needs-review,
+        no-evidence, unverifiable-number…) because this is lexical analysis, not
+        entailment detection. Relay the verdict AND the passages, and never
+        upgrade "likely-supported" to "verified" in your wording.
+        """
+        con = db.connect()
+        try:
+            if draft:
+                return json.dumps(answer.check_draft(claim, con=con), indent=2)
+            return json.dumps(answer.check(claim, con=con), indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def compose_answer(question: str, k: int = 12) -> str:
+        """Assemble a cited answer scaffold: passages with tiers, coverage
+        statistics, existing beliefs on the topic, and BibTeX for exactly the
+        sources used. Write the prose from this and nothing else."""
+        con = db.connect()
+        try:
+            return json.dumps(answer.compose(question, con=con, k=k), indent=2)
+        finally:
+            con.close()
+
+    # ============================================================= CLINICAL
+    @mcp.tool()
+    def molecular_screen(tumour_type: str = "", variants: str = "", hla: str = "",
+                         tmb: float = 0, msi: str = "") -> str:
+        """Screen a DE-IDENTIFIED molecular profile: ESCAT actionability tiers,
+        HLA validation, and candidate trials from the swept corpus.
+
+        `variants` and `hla` are comma-separated.
+
+        THIS IS A SEARCH AID, NOT AN ELIGIBILITY DETERMINATION, and nothing it
+        returns is a treatment recommendation. Relay the limits block verbatim
+        whenever you present the output. Never accept identifiable patient data.
+        """
+        con = db.connect()
+        try:
+            profile = clinic.PatientProfile(
+                tumour_type=tumour_type,
+                variants=[v.strip() for v in variants.split(",") if v.strip()],
+                hla=[h.strip() for h in hla.split(",") if h.strip()],
+                tmb=tmb or None, msi=msi)
+            return json.dumps(clinic.screen(con, profile), indent=2)
+        finally:
+            con.close()
 
     @mcp.tool()
     def corpus_status() -> str:
