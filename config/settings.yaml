@@ -26,6 +26,10 @@ retrieval:
   rrf_k: 60           # reciprocal-rank-fusion damping; higher = flatter blend
   keyword_weight: 1.0
   vector_weight: 1.0
+  # The entity-graph leg. Slightly below the others on purpose: it is the leg
+  # that finds connections rather than matches, which is invaluable on multi-hop
+  # questions and noisier on direct ones.
+  graph_weight: 0.8
   snippet_chars: 420
 
 sweep:

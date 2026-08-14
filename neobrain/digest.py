@@ -30,6 +30,7 @@ def write(
     lookback: int,
     errors: list[str] | None = None,
     fulltext_added: int = 0,
+    conflicts: int = 0,
 ) -> Path:
     config.DIGEST_DIR.mkdir(parents=True, exist_ok=True)
     path = config.DIGEST_DIR / f"{run_date}.md"
@@ -102,6 +103,31 @@ def write(
             deltas = "; ".join(f"{h['field']}: {h['old_value']} → {h['new_value']}" for h in hist)
             lines.append(f"- **{t['nct_id']}** — {deltas or 'updated'} · {t.get('title', '')}")
         lines.append("")
+
+    # ------------------------------------------------------ contradictions
+    conflict_rows = con.execute(
+        """SELECT c.id, c.cue, c.passage, b.claim, p.title, p.url, p.evidence_tier
+           FROM conflicts c
+           JOIN beliefs b ON b.id = c.belief_id
+           LEFT JOIN papers p ON p.id = c.paper_id
+           WHERE c.status='open' ORDER BY COALESCE(p.evidence_tier,0) DESC, c.id DESC LIMIT 10"""
+    ).fetchall()
+    if conflict_rows:
+        lines += [
+            "## Evidence that may contradict what we believe",
+            "",
+            "Candidates from an imprecise detector — read the passage before "
+            "acting. Resolve with `neobrain conflicts`.",
+            "",
+        ]
+        for c in conflict_rows:
+            lines.append(f"**`#{c['id']}` against:** _{_snippet(c['claim'], 160)}_  ")
+            lines.append(f"cue: {c['cue']}  ")
+            if c["title"]:
+                tier = f" · tier {c['evidence_tier']}" if c["evidence_tier"] is not None else ""
+                lines.append(f"in: {c['title']}{tier} · [link]({c['url'] or ''})  ")
+            lines.append(f"> {_snippet(c['passage'], 320)}…")
+            lines.append("")
 
     # ---------------------------------------------------------- open loops
     pending = con.execute(

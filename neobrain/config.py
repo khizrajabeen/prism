@@ -80,6 +80,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "rrf_k": 60,          # reciprocal-rank-fusion damping constant
         "keyword_weight": 1.0,
         "vector_weight": 1.0,
+        "graph_weight": 0.8,   # entity-graph leg; see config/settings.yaml
         "snippet_chars": 420,
     },
     "sweep": {

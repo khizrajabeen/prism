@@ -67,6 +67,16 @@ misleads.
 | **EO771 / AT-3** | C57BL/6 | Breast | Alternatives to 4T1 on a B6 background | Sub-line variability is notorious |
 | **B16-OVA / MC38-OVA** | C57BL/6 | Model antigen | Clean, quantifiable (OT-I/OT-II, SIINFEKL tetramer) | OVA is a foreign protein with an untolerized repertoire — it is a **positive control**, not a neoantigen model |
 
+**The mechanism behind the CT26 trap is immunodominance.** When one epitope
+elicits a response that suppresses responses to others presented on the same
+cell, the subdominant responses become undetectable — not absent, outcompeted.
+The gp70/AH1 response in CT26 is immunodominant, so a genuine neoantigen
+response can exist and still be invisible in your ELISpot. The same phenomenon
+governs vaccine construct design: a concatemer whose strongest epitope is
+immunodominant may suppress the response to the other nineteen. Measuring AH1
+reactivity in parallel is how you tell "no neoantigen response" apart from
+"a neoantigen response you cannot see".
+
 **Strain matching is non-negotiable.** MC38 in BALB/c is an allograft rejection
 experiment. Also: authenticate your lines (STR profiling), test for mycoplasma,
 and keep passage number low and recorded — MC38 and 4T1 sub-lines drift

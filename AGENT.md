@@ -30,8 +30,34 @@ Concretely:
 1. Call `brief` (MCP) or run `neobrain brief`. Read it in full.
 2. Summarize in under 150 words: what changed since we last spoke, what is
    awaiting my approval, what is due for review.
-3. Do **not** read `knowledge/*.md` wholesale. Retrieve on demand.
-4. If the corpus looks stale (no sweep in >3 days), say so and offer to run one.
+3. **Read the rules and recent corrections in the brief as binding.** They are
+   things I already told you. Repeating a corrected mistake is the single
+   failure this system exists to prevent.
+4. Do **not** read `knowledge/*.md` wholesale. Retrieve on demand.
+5. If the corpus looks stale (no sweep in >3 days), say so and offer to run one.
+
+## Recording — do this continuously, not at the end
+
+Call `remember` **as things happen**, not in a batch at session end. It is
+immediate, needs no approval, and cannot be undone, so the bar is low: record
+anything you would be annoyed to have lost next month.
+
+Record without being asked:
+
+- **Every correction I make to you** — in my words, not your paraphrase.
+- **Preferences** I state about how I work, what I have access to, what I have
+  ruled out.
+- **Decisions** and the reason behind them, including decisions *against*
+  something ("we are not using CT26 because…").
+- **Results** I report from the bench or an analysis.
+- **Errors** you made and what the actual answer was.
+
+Before telling me something about my own project, call `recall` first. Before
+recommending an approach, check `get_rules` and `recall` — I may have already
+rejected it, and re-proposing it wastes both our time.
+
+A journal entry is a record that something was said. It is **not** authoritative
+and must never be cited as an established fact — that is what beliefs are for.
 
 ## During the session
 
@@ -40,11 +66,25 @@ Concretely:
 returns nothing, say the corpus is empty on this topic — do not silently
 substitute background knowledge.
 
-**Label confidence explicitly.** Every substantive claim is one of:
-- *established* — replicated, multiple independent groups
-- *contested* — the field disagrees; name both positions
-- *single-paper* — one result, not yet replicated
+**Label confidence explicitly, using the evidence tiers.** Every evidence pack
+reports a tier per source (5 = randomized trial, 0 = editorial) and an overall
+strength line. Carry it into the phrasing:
+- *established* — tier 4–5, multiple independent sources
+- *contested* — sources disagree; name both positions and their tiers
+- *single-paper* — one source, or tier ≤2; state it as provisional
 - *inference* — your reasoning, not anyone's finding
+
+Do not upgrade a tier-1 preprint to "shown" because it is convenient.
+
+**Check for contradictions.** If `open_conflicts` has entries touching the
+topic, or the evidence pack's belief section disagrees with the passages, say so
+explicitly and propose a `belief_revision`. Never assert a belief and its
+contradiction in the same answer without naming the tension.
+
+**Use the graph for multi-hop questions.** When a question spans papers — "why
+did X fail in model Y?" — `graph_path` and `graph_neighbours` find the
+intermediate concept. Report any path as a lead to verify, never as a causal
+finding.
 
 **Distinguish presentation from immunogenicity from clinical benefit.** These
 are different claims with different evidence standards, and conflating them is
@@ -69,10 +109,17 @@ are unsure a function exists, say so and check.
    - New durable knowledge → a `knowledge/*.md` file
    - Changed project state, decisions, preferences → `core`
    - A new sourced claim → a `belief`
+   - A claim that changed → a `belief_revision` (the old version is kept)
+   - A way of working I corrected you on → a `rule`
 2. Every proposal carries a rationale and the evidence behind it.
 3. Propose 3–8 spaced-repetition cards for facts I will need again.
 4. Record the session: `end_session` with a summary written for your future
    self — what we concluded, what we ruled out, what is still open.
+
+**The two-tier split, restated because it is the thing to get right:**
+`remember` is immediate, immutable, and unreviewed — use it constantly, and
+never cite it as fact. `propose_memory_edit` is how something becomes
+authoritative, and it waits for me.
 
 **You cannot apply memory edits.** There is no tool for it. I approve them with
 `neobrain review` after seeing the diff. This is deliberate: an agent that can

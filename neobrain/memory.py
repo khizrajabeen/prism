@@ -42,7 +42,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from . import config, db, digest
+from . import config, db, digest, journal
 
 VALID_CONFIDENCE = ("high", "moderate", "low", "contested")
 
@@ -80,6 +80,8 @@ def add_belief(
     rationale: str = "",
     sources: list[dict[str, str]] | None = None,
     review_days: int | None = None,
+    valid_from: str | None = None,
+    root_id: int | None = None,
     cfg: config.Config | None = None,
 ) -> int:
     cfg = cfg or config.load()
@@ -92,14 +94,19 @@ def add_belief(
         )
     days = review_days if review_days is not None else int(cfg.get("memory.belief_review_days", 120))
     review_on = (dt.date.today() + dt.timedelta(days=days)).isoformat()
+    stamp = db.now()
 
     cur = con.execute(
         """INSERT INTO beliefs(claim, confidence, status, topic, rationale,
-                               created_at, updated_at, review_on)
-           VALUES (?,?,'active',?,?,?,?,?)""",
-        (claim.strip(), confidence, topic, rationale, db.now(), db.now(), review_on),
+                               created_at, updated_at, review_on,
+                               asserted_at, valid_from, version)
+           VALUES (?,?,'active',?,?,?,?,?,?,?,1)""",
+        (claim.strip(), confidence, topic, rationale, stamp, stamp, review_on,
+         stamp, valid_from or stamp),
     )
     belief_id = int(cur.lastrowid)
+    con.execute("UPDATE beliefs SET root_id=COALESCE(root_id, ?) WHERE id=?",
+                (root_id or belief_id, belief_id))
     con.executemany(
         "INSERT INTO belief_sources(belief_id, paper_id, citation, url, stance)"
         " VALUES (?,?,?,?,?)",
@@ -110,16 +117,113 @@ def add_belief(
         ],
     )
     con.commit()
+    journal.record(
+        con,
+        f"Belief #{belief_id} recorded [{confidence}]: {claim.strip()}",
+        kind="decision", topic=topic or "beliefs", source="memory", importance=3,
+    )
     return belief_id
 
 
 def supersede_belief(con: sqlite3.Connection, old_id: int, new_id: int, note: str = "") -> None:
+    """Invalidate a belief without deleting it.
+
+    Bitemporal, in the sense the temporal-knowledge-graph literature uses:
+    `valid_until` records when the claim stopped being true of the world;
+    `invalidated_at` records when we found that out. The row itself survives,
+    so `as_of()` can still answer "what did I believe last March?" — which is
+    the question you need when a reviewer asks why your methods section says
+    what it says.
+    """
+    stamp = db.now()
     con.execute(
-        "UPDATE beliefs SET status='superseded', superseded_by=?, updated_at=?,"
-        " rationale = COALESCE(rationale,'') || ? WHERE id=?",
-        (new_id, db.now(), f"\n[superseded {db.today()}] {note}", old_id),
+        """UPDATE beliefs SET status='superseded', superseded_by=?, updated_at=?,
+           invalidated_at=?, valid_until=COALESCE(valid_until, ?), invalidated_reason=?
+           WHERE id=?""",
+        (new_id, stamp, stamp, stamp, note or "superseded by a later belief", old_id),
     )
     con.commit()
+    journal.record(
+        con,
+        f"Belief #{old_id} superseded by #{new_id}: {note}",
+        kind="correction", topic="beliefs", source="memory", importance=4,
+    )
+
+
+def revise_belief(
+    con: sqlite3.Connection,
+    belief_id: int,
+    new_claim: str,
+    *,
+    confidence: str | None = None,
+    sources: list[dict[str, str]] | None = None,
+    reason: str = "",
+    cfg: config.Config | None = None,
+) -> int:
+    """Record a changed understanding as a new version, keeping the old one.
+
+    This is the operation that makes "it must never forget" compatible with
+    "it must be able to change its mind". Nothing is edited in place: the old
+    belief is invalidated, a new version is inserted, and both share a
+    `root_id` so the lineage is walkable in either direction.
+    """
+    old = con.execute("SELECT * FROM beliefs WHERE id=?", (belief_id,)).fetchone()
+    if old is None:
+        raise ValueError(f"no belief #{belief_id}")
+
+    inherited = [
+        {"paper_id": s["paper_id"], "citation": s["citation"], "url": s["url"],
+         "stance": s["stance"]}
+        for s in con.execute(
+            "SELECT paper_id, citation, url, stance FROM belief_sources WHERE belief_id=?",
+            (belief_id,),
+        ).fetchall()
+    ]
+    merged = inherited + list(sources or [])
+    if not merged:
+        raise ValueError("a revision still needs at least one source")
+
+    new_id = add_belief(
+        con, new_claim,
+        confidence=confidence or old["confidence"],
+        topic=old["topic"] or "",
+        rationale=f"revision of #{belief_id}: {reason}",
+        sources=merged,
+        root_id=old["root_id"] or belief_id,
+        cfg=cfg,
+    )
+    con.execute("UPDATE beliefs SET version=? WHERE id=?",
+                ((old["version"] or 1) + 1, new_id))
+    supersede_belief(con, belief_id, new_id, reason)
+    con.commit()
+    return new_id
+
+
+def belief_history(con: sqlite3.Connection, belief_id: int) -> list[dict]:
+    """Every version of a claim, oldest first."""
+    row = con.execute("SELECT root_id, id FROM beliefs WHERE id=?", (belief_id,)).fetchone()
+    if row is None:
+        return []
+    root = row["root_id"] or row["id"]
+    return db.rows_to_dicts(con.execute(
+        "SELECT * FROM beliefs WHERE root_id=? OR id=? ORDER BY id", (root, root)
+    ).fetchall())
+
+
+def as_of(con: sqlite3.Connection, when: str, *, topic: str | None = None) -> list[dict]:
+    """What this brain believed at a past moment.
+
+    Answers "what did I think in March, and on what evidence?" — which is the
+    question that comes up when you have to defend a decision made months ago.
+    """
+    sql = """SELECT * FROM beliefs
+             WHERE asserted_at <= ?
+               AND (invalidated_at IS NULL OR invalidated_at > ?)"""
+    args: list[Any] = [when, when]
+    if topic:
+        sql += " AND (topic LIKE ? OR claim LIKE ?)"
+        args += [f"%{topic}%", f"%{topic}%"]
+    return db.rows_to_dicts(con.execute(sql + " ORDER BY id", args).fetchall())
 
 
 def get_beliefs(
@@ -167,6 +271,68 @@ def format_belief(b: dict) -> str:
     )
 
 
+# ------------------------------------------------------- procedural memory
+
+def add_rule(
+    con: sqlite3.Connection,
+    trigger: str,
+    action: str,
+    *,
+    scope: str = "",
+    source: str = "",
+) -> int:
+    """Record a learned way of working.
+
+    The third memory scope, alongside episodic (journal) and semantic
+    (beliefs). "When I design a mouse vaccine study, check for an
+    adjuvant-alone arm" is not a fact about immunology and does not belong in
+    `beliefs` — it is a procedure, and procedures are what turn a corrected
+    mistake into a mistake that does not recur.
+    """
+    existing = con.execute(
+        "SELECT id FROM rules WHERE trigger=? AND action=?", (trigger.strip(), action.strip())
+    ).fetchone()
+    if existing:
+        return int(existing["id"])
+    cur = con.execute(
+        "INSERT INTO rules(trigger, action, scope, source, created_at) VALUES (?,?,?,?,?)",
+        (trigger.strip(), action.strip(), scope, source, db.now()),
+    )
+    con.commit()
+    journal.record(
+        con, f"Rule learned — when {trigger.strip()}: {action.strip()}",
+        kind="preference", topic=scope or "procedure", source=source or "user", importance=4,
+    )
+    return int(cur.lastrowid)
+
+
+def get_rules(con: sqlite3.Connection, scope: str | None = None,
+              active_only: bool = True) -> list[dict]:
+    sql = "SELECT * FROM rules WHERE 1=1"
+    args: list[Any] = []
+    if active_only:
+        sql += " AND active=1"
+    if scope:
+        sql += " AND (scope LIKE ? OR trigger LIKE ? OR action LIKE ?)"
+        args += [f"%{scope}%"] * 3
+    return db.rows_to_dicts(con.execute(sql + " ORDER BY id", args).fetchall())
+
+
+def fire_rule(con: sqlite3.Connection, rule_id: int) -> None:
+    """Mark a rule as applied, so unused rules can be pruned honestly."""
+    con.execute(
+        "UPDATE rules SET fired = fired + 1, last_fired=? WHERE id=?", (db.now(), rule_id)
+    )
+    con.commit()
+
+
+def retire_rule(con: sqlite3.Connection, rule_id: int, reason: str = "") -> None:
+    con.execute("UPDATE rules SET active=0 WHERE id=?", (rule_id,))
+    con.commit()
+    journal.record(con, f"Rule #{rule_id} retired: {reason}", kind="decision",
+                   topic="procedure", source="user", importance=2)
+
+
 # ------------------------------------------------------------------ proposals
 
 def propose(
@@ -186,7 +352,7 @@ def propose(
         {"mode": "replace_section", "heading": "## X", "text": "..."}
         {"mode": "replace_file", "text": "..."}
     """
-    if kind not in ("core", "knowledge", "belief", "belief_update"):
+    if kind not in ("core", "knowledge", "belief", "belief_update", "rule", "belief_revision"):
         raise ValueError(f"unknown proposal kind: {kind}")
     if not rationale.strip():
         raise ValueError("a proposal needs a rationale — why should this be believed?")
@@ -242,7 +408,7 @@ def proposal_diff(con: sqlite3.Connection, proposal_id: int) -> str:
         return f"no proposal #{proposal_id}"
     payload = json.loads(row["payload"] or "{}")
 
-    if row["kind"] in ("belief", "belief_update"):
+    if row["kind"] in ("belief", "belief_update", "rule", "belief_revision"):
         return json.dumps(payload, indent=2)
 
     path = _target_path(row["kind"], row["target"])
@@ -283,6 +449,21 @@ def apply_proposal(con: sqlite3.Connection, proposal_id: int, note: str = "") ->
         if payload.get("supersedes"):
             supersede_belief(con, int(payload["supersedes"]), belief_id, row["rationale"])
             result["superseded"] = payload["supersedes"]
+
+    elif row["kind"] == "belief_revision":
+        result["belief_id"] = revise_belief(
+            con, int(row["target"]), payload["claim"],
+            confidence=payload.get("confidence"),
+            sources=payload.get("sources"),
+            reason=row["rationale"],
+        )
+        result["superseded"] = int(row["target"])
+
+    elif row["kind"] == "rule":
+        result["rule_id"] = add_rule(
+            con, payload["trigger"], payload["action"],
+            scope=payload.get("scope", ""), source=f"proposal #{proposal_id}",
+        )
 
     elif row["kind"] == "belief_update":
         fields, args = [], []
@@ -343,7 +524,10 @@ def start_session(con: sqlite3.Connection, topic: str = "") -> int:
         "INSERT INTO sessions(started_at, topic) VALUES (?,?)", (db.now(), topic)
     )
     con.commit()
-    return int(cur.lastrowid)
+    sid = int(cur.lastrowid)
+    journal.record(con, f"Session #{sid} started: {topic or 'untitled'}",
+                   kind="session", topic=topic, source="agent", session_id=sid)
+    return sid
 
 
 def end_session(
@@ -360,6 +544,16 @@ def end_session(
         (db.now(), summary, decisions, open_threads, session_id),
     )
     con.commit()
+    # Mirror the session record into the journal so it survives in the
+    # append-only tier too — the sessions table is editable, the journal is not.
+    journal.record(con, f"Session #{session_id} summary: {summary}",
+                   kind="session", source="agent", session_id=session_id, importance=3)
+    if decisions:
+        journal.record(con, decisions, kind="decision", source="agent",
+                       session_id=session_id, importance=4)
+    if open_threads:
+        journal.record(con, open_threads, kind="question", source="agent",
+                       session_id=session_id, importance=3)
 
 
 def recent_sessions(con: sqlite3.Connection, n: int = 5) -> list[dict]:
@@ -412,11 +606,48 @@ def brief(
         f"- {s['papers']:,} papers ({s['papers_oa']:,} open access, {s['fulltext']:,} with full text), "
         f"{s['chunks']:,} indexed passages"
         + (f", {s['embeddings']:,} embedded" if s["embeddings"] else " (keyword search only)"),
+        f"- {s['entities']:,} entities, {s['entity_edges']:,} graph edges",
         f"- {s['trials']:,} trials tracked, {s['trial_changes']:,} recorded status changes",
-        f"- {s['beliefs']:,} active beliefs ({s['beliefs_due']} due for re-check)",
+        f"- {s['beliefs']:,} active beliefs ({s['beliefs_due']} due for re-check), "
+        f"{s['journal']:,} journal entries since {s['journal_since'] or 'today'}",
         f"- last sweep: {s['last_sweep'] or 'never — run `neobrain sweep --days 30`'}",
         "",
     ]
+
+    # Procedural memory comes before everything else: these are the standing
+    # instructions I learned from you, and they should shape the whole session.
+    rules = get_rules(con)
+    if rules:
+        parts += ["## Rules I have learned from you (procedural memory)", ""]
+        for r in rules[:15]:
+            parts.append(f"- **When** {r['trigger']} → {r['action']}")
+        parts.append("")
+
+    marks = journal.timeline(con, limit=8)
+    if marks:
+        parts += [
+            "## Recent corrections, decisions and preferences (episodic)",
+            "",
+        ]
+        for m in marks:
+            parts.append(f"- _{m['at'][:10]}_ **{m['kind']}**: {' '.join(m['text'].split())[:220]}")
+        parts += ["", "These are recorded verbatim and are never deleted. "
+                      "Search further back with the `recall` tool.", ""]
+
+    open_conflicts = con.execute(
+        """SELECT c.id, c.cue, b.claim FROM conflicts c
+           JOIN beliefs b ON b.id=c.belief_id
+           WHERE c.status='open' ORDER BY c.id DESC LIMIT 8"""
+    ).fetchall()
+    if open_conflicts:
+        parts += [
+            "## Evidence that may contradict what we believe",
+            "",
+        ]
+        for c in open_conflicts:
+            parts.append(f"- `#{c['id']}` on _{c['claim'][:110]}_ — {c['cue'][:150]}")
+        parts += ["", "These are **candidate** contradictions from an imprecise "
+                      "detector, not verdicts. Read the passage before acting.", ""]
 
     latest = digest.latest(1)
     if latest:

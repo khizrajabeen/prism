@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import config, db, digest, memory, retrieve, tutor
+from . import config, db, digest, evidence, graph, journal, memory, retrieve, tutor
 from .sources import fulltext as ft_mod
 
 # The SDK renamed its high-level server class in 2.0 (FastMCP → MCPServer).
@@ -253,6 +253,65 @@ def _server():
             [{"file": n, "approx_tokens": t} for n, t in memory.list_knowledge()], indent=2
         )
 
+    # ------------------------------------------------- permanent memory
+    @mcp.tool()
+    def remember(text: str, kind: str = "observation", topic: str = "",
+                 importance: int = 2) -> str:
+        """Write something to permanent, append-only memory. USE THIS OFTEN.
+
+        This is the one memory tool with no approval step, because the storage
+        is immutable: entries can never be edited or deleted, by you or anyone.
+        An unreviewed entry is a record that something was said or seen — it is
+        not authoritative and must not be cited as established fact.
+
+        Record, as they happen: corrections the user makes to you, their stated
+        preferences, decisions and the reasons behind them, experimental
+        results, and anything you would be annoyed to have forgotten next
+        month. Prefer their exact words over your paraphrase.
+
+        kind: observation | correction | decision | preference | result |
+              question | error
+        importance: 1-5; 4+ surfaces in every future session brief.
+        """
+        con = db.connect()
+        try:
+            jid = journal.record(con, text, kind=kind, topic=topic,
+                                 source="agent", importance=importance)
+            return f"journal #{jid} recorded permanently (append-only, cannot be edited)"
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def recall(query: str = "", kind: str | None = None, since: str | None = None,
+               limit: int = 20) -> str:
+        """Search episodic memory — everything ever recorded, never deleted.
+
+        Use before claiming you do not know something about the user's project,
+        and before repeating advice they may have already rejected. An empty
+        query returns the most recent entries.
+        """
+        con = db.connect()
+        try:
+            return json.dumps(
+                journal.recall(con, query, kind=kind, since=since, limit=limit), indent=2
+            )
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def get_rules(scope: str | None = None) -> str:
+        """Procedural memory: the ways of working learned from this user.
+
+        Check these before giving methodological advice — they encode
+        corrections the user already made, and repeating a corrected mistake is
+        the failure this system exists to prevent.
+        """
+        con = db.connect()
+        try:
+            return json.dumps(memory.get_rules(con, scope=scope), indent=2)
+        finally:
+            con.close()
+
     # -------------------------------------------------------------- beliefs
     @mcp.tool()
     def get_beliefs(topic: str | None = None, due_only: bool = False) -> str:
@@ -260,6 +319,106 @@ def _server():
         con = db.connect()
         try:
             return json.dumps(memory.get_beliefs(con, topic=topic, due_only=due_only), indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def belief_history(belief_id: int) -> str:
+        """Every version of a claim, including superseded ones.
+
+        Beliefs are versioned, never overwritten. Use this to answer "did we
+        always think that?" and to see what evidence changed our minds.
+        """
+        con = db.connect()
+        try:
+            return json.dumps(memory.belief_history(con, belief_id), indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def believed_as_of(when: str, topic: str | None = None) -> str:
+        """What this brain believed at a past moment (ISO date or datetime).
+
+        For questions like "on what basis did I write that in March?" — the
+        state of knowledge then, not now.
+        """
+        con = db.connect()
+        try:
+            return json.dumps(memory.as_of(con, when, topic=topic), indent=2)
+        finally:
+            con.close()
+
+    # ---------------------------------------------------------- entity graph
+    @mcp.tool()
+    def graph_neighbours(entity: str, limit: int = 15) -> str:
+        """What an entity is most strongly connected to in the corpus.
+
+        Entities are genes, HLA alleles, cell lines, mouse strains, tools,
+        assays and key concepts. Use to orient on an unfamiliar term, or to
+        find the confounds attached to a model system.
+        """
+        con = db.connect()
+        try:
+            row = con.execute(
+                "SELECT id, name, kind, n_mentions FROM entities WHERE canonical=?"
+                " ORDER BY n_mentions DESC LIMIT 1", (entity.lower(),),
+            ).fetchone()
+            if row is None:
+                return f"'{entity}' is not in the entity graph."
+            return json.dumps({
+                "entity": dict(row),
+                "neighbours": graph.neighbours(con, int(row["id"]), limit=limit),
+            }, indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def graph_path(from_entity: str, to_entity: str) -> str:
+        """How two concepts connect through the literature, via intermediates.
+
+        Answers multi-hop questions that no single passage covers. The result
+        is a co-occurrence path, NOT a causal claim: it means these things are
+        discussed together through these intermediates. Report it as a lead to
+        verify, never as a finding.
+        """
+        con = db.connect()
+        try:
+            path = graph.explain_path(con, from_entity, to_entity)
+            if not path:
+                return (f"No path found between '{from_entity}' and '{to_entity}' "
+                        f"within 3 hops. They may be genuinely unconnected in this "
+                        f"corpus, or the corpus may not cover the link yet.")
+            return " → ".join(path) + (
+                "\n\nCo-occurrence path, not causation: these concepts are discussed "
+                "together through these intermediates. Verify before asserting."
+            )
+        finally:
+            con.close()
+
+    # ------------------------------------------------------------ conflicts
+    @mcp.tool()
+    def open_conflicts(limit: int = 15) -> str:
+        """Evidence that may contradict what this brain currently believes.
+
+        Candidates from a deliberately over-sensitive detector — read the
+        passage before acting. When one is real, propose a `belief_revision`;
+        the user adjudicates.
+        """
+        con = db.connect()
+        try:
+            rows = evidence.open_conflicts(con, limit=limit)
+            if not rows:
+                return "No open conflicts."
+            return json.dumps(rows, indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def scan_for_conflicts() -> str:
+        """Re-scan the corpus for evidence contradicting stored beliefs."""
+        con = db.connect()
+        try:
+            return f"{evidence.scan(con)} candidate contradiction(s) opened"
         finally:
             con.close()
 
@@ -277,8 +436,14 @@ def _server():
         """Queue an edit to long-term memory for the user's approval.
 
         kind: 'core' (memory/CORE.md), 'knowledge' (a knowledge/*.md file),
-        'belief' (a new sourced claim), or 'belief_update'.
+        'belief' (a new sourced claim), 'belief_update', 'belief_revision'
+        (target = the belief id being revised; payload needs a new `claim`),
+        or 'rule' (procedural memory; payload needs `trigger` and `action`).
         mode: 'append' | 'replace_section' (needs `heading`) | 'replace_file'.
+
+        Note the division of labour: use `remember` for raw observations, which
+        is immediate and needs no approval. Use this when something should
+        become authoritative — cited as fact, or applied as a standing rule.
 
         You cannot apply this yourself — the user reviews the diff with
         `neobrain review`. Always include the evidence that motivated it.

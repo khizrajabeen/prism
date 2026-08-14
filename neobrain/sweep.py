@@ -19,7 +19,7 @@ import time
 import traceback
 from typing import Any, Callable
 
-from . import config, db, digest, scoring
+from . import config, db, digest, evidence, graph, journal, scoring
 from .sources import clinicaltrials, europepmc, fulltext, http, preprints
 
 
@@ -166,16 +166,47 @@ def sweep(
             errors.append(f"fulltext: {e}")
             emit(f"  ! full-text pass failed: {e}")
 
-    # ------------------------------------------------------------ embedding
+    # ------------------------------------------------------------ indexing
+    # Chunking runs whether or not embeddings are configured — keyword search
+    # and the entity graph both depend on it, and neither needs a model.
     embedded = 0
-    if do_embed and cfg.get("embeddings.backend", "none") != "none":
-        try:
-            from . import embeddings as emb
-            embedded = emb.index_new(con, cfg, progress=emit)
-            emit(f"  [embed] {embedded} chunks")
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"embed: {e}")
-            emit(f"  ! embedding pass failed: {e}")
+    try:
+        from . import embeddings as emb
+        embedded = emb.index_new(con, cfg, progress=emit)
+        if embedded:
+            emit(f"  [embed] {embedded} chunks embedded")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"embed: {e}")
+        emit(f"  ! indexing pass failed: {e}")
+
+    # ------------------------------------------------------- evidence grading
+    graded = 0
+    try:
+        graded = evidence.grade_corpus(con)
+        if graded:
+            emit(f"  [grade] {graded} papers assigned an evidence tier")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"grade: {e}")
+
+    # ---------------------------------------------------------- entity graph
+    graph_report: dict[str, int] = {}
+    try:
+        graph_report = graph.index_chunks(con)
+        if graph_report.get("mentions"):
+            emit(f"  [graph] {graph_report['mentions']} mentions · "
+                 f"{graph_report['entities']} entities")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"graph: {e}")
+        emit(f"  ! graph pass failed: {e}")
+
+    # ------------------------------------------------- contradiction scanning
+    conflicts = 0
+    try:
+        conflicts = evidence.scan(con)
+        if conflicts:
+            emit(f"  [conflicts] {conflicts} passages may contradict stored beliefs")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"conflicts: {e}")
 
     unreachable = http.circuit_state()
     if unreachable:
@@ -196,7 +227,18 @@ def sweep(
         con, cfg,
         new_papers=new_papers, new_trials=new_trials, changed_trials=changed_trials,
         run_date=run_date, lookback=lookback, errors=errors,
-        fulltext_added=ft_added,
+        fulltext_added=ft_added, conflicts=conflicts,
+    )
+
+    # The sweep itself is an event worth remembering. A gap in this record is
+    # how you find out the scheduler quietly stopped firing in March.
+    journal.record(
+        con,
+        f"Sweep over the last {lookback}d: {len(new_papers)} new papers, "
+        f"{len(new_trials)} new trials, {len(changed_trials)} trial changes, "
+        f"{ft_added} full texts, {conflicts} candidate contradictions."
+        + (f" Errors: {'; '.join(errors[:3])}" if errors else ""),
+        kind="sweep", source="sweep", importance=2 if errors else 1,
     )
     con.close()
 
@@ -210,6 +252,9 @@ def sweep(
         "changed_trials": len(changed_trials),
         "fulltext_added": ft_added,
         "embedded": embedded,
+        "graded": graded,
+        "graph": graph_report,
+        "conflicts": conflicts,
         "errors": errors,
         "digest": str(path),
         "duration_s": duration,

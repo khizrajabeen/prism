@@ -54,13 +54,17 @@ guesses.
 | **Live literature** | Europe PMC (journals **and** preprints), bioRxiv/medRxiv direct feed, ClinicalTrials.gov v2 with **status-change history** |
 | **Full text, not just abstracts** | Open-access papers are pulled as structured sections — the Methods are where the protocol detail lives |
 | **Your own PDFs** | Save a paywalled paper into `inbox/`, ingest it into the same tables |
-| **Hybrid retrieval** | BM25 keyword + optional local vectors, fused by reciprocal rank |
-| **Three-tier memory** | Core (always loaded) / semantic (retrieved) / episodic (searched) |
-| **An approval gate** | The agent proposes memory edits; you approve diffs. It cannot write to memory itself |
-| **A sourced belief store** | Claims with confidence, provenance, and a review date |
+| **Hybrid retrieval** | BM25 + optional local vectors + an entity graph, fused by reciprocal rank |
+| **Multi-hop reasoning** | Questions whose answer spans papers, via graph-seeded retrieval |
+| **Memory that cannot be erased** | An append-only journal the database itself refuses to mutate |
+| **Beliefs that change without forgetting** | Bitemporal versioning: superseded, never overwritten |
+| **Procedural memory** | Rules learned from your corrections, surfaced every session |
+| **Contradiction detection** | New evidence is scanned against what you believe, and tensions are queued |
+| **Evidence grading** | Every source gets a tier, so "established" and "one preprint" stop looking alike |
+| **An approval gate** | The agent proposes curated memory edits; you approve diffs |
 | **A curriculum** | Ten modules from antigen presentation to study design, each with a checkpoint task |
 | **Spaced repetition** | SM-2 cards built from your own reading |
-| **Agent tools** | An MCP server, so Claude Desktop / Claude Code / any client gets all of it |
+| **Agent tools** | An MCP server exposing 30 tools to Claude Desktop / Claude Code / any client |
 
 Two dependencies (`requests`, `PyYAML`). Everything else is optional and the
 system degrades gracefully without it.
@@ -76,9 +80,20 @@ neobrain search "HLA LOH detection" -k 8
 neobrain search --papers "KRAS G12D vaccine"
 neobrain paper MED:39012345 --methods    # just the protocol detail
 neobrain mark MED:39012345 --state read --rating 5 --note "the control design I want"
+
+neobrain remember "..." --kind correction  # permanent, append-only, immediate
+neobrain recall "montanide"                # search everything ever recorded
+neobrain rule add "<when>" "<do this>"     # procedural memory
+neobrain history 7                         # every version of a belief
+neobrain history --as-of 2026-03-01        # what did I believe then?
+neobrain graph CT26                        # what connects to what
+neobrain graph --path CT26 immunodominance # multi-hop
+neobrain conflicts --scan                  # evidence against stored beliefs
+
 neobrain teach 05                        # curriculum module 5, grounded in your corpus
 neobrain quiz                            # spaced repetition
 neobrain review                          # approve or reject the agent's memory edits
+neobrain backup                          # snapshot, safe while in use
 neobrain status
 ```
 
@@ -130,23 +145,77 @@ systemd timer and Windows Task Scheduler instructions are in
 
 ## How the memory actually works
 
-Three tiers, because "read all my memory at startup" stops working after about
-a week — the context window fills with stale material and answer quality drops
-in a way that is hard to attribute.
+The 2026 agent-memory literature has converged on three scopes — **episodic**
+(what happened), **semantic** (what is true), **procedural** (how to work) —
+and on one structural rule from the temporal-knowledge-graph systems: *never
+delete, invalidate*. NeoBrain implements all four ideas, with the addition that
+matters most for research: nothing enters the authoritative tiers unreviewed.
 
-1. **Core** (`memory/CORE.md`) — identity, project, standing preferences, the
-   handful of beliefs that shape every answer. Always loaded. ~2k token cap,
-   enforced by `neobrain doctor` nagging you.
-2. **Semantic** (`knowledge/*.md` + the `beliefs` table) — durable domain
-   knowledge, retrieved by topic. Beliefs carry confidence, sources, and a
-   **review date**, so a 2026 claim gets re-examined rather than hardening into
-   dogma.
-3. **Episodic** (`brain.db`, `digests/`) — everything ever seen. Searched,
-   never loaded wholesale.
+### Episodic — the journal, which cannot be erased
 
-`neobrain brief` is the bounded startup payload: core in full, corpus state,
-the latest digest, pending approvals, beliefs due for review, and where the last
-session left off. Everything else is a retrieval away.
+```bash
+neobrain remember "Montanide sequesters T cells at the injection site — avoid it" \
+    --kind preference --importance 4
+neobrain recall "montanide"
+```
+
+Everything the brain learns lands here immediately, with no approval step, from
+the first run. The table is append-only and **the database enforces it**:
+
+```
+$ sqlite3 brain.db "DELETE FROM journal WHERE id=2"
+Error: the journal is append-only: entries are never deleted
+```
+
+Not a convention, a trigger. Neither a confused agent nor you at 2am can revise
+what was recorded. Corrections are made by *adding* an entry, so the history of
+being wrong survives alongside the fix.
+
+### Semantic — beliefs that change without forgetting
+
+Beliefs are versioned, never overwritten. A revision invalidates the old row and
+inserts a new one sharing a lineage:
+
+```
+$ neobrain history 3
+  v1 #2 [moderate] (superseded)
+    Class II epitopes contribute little to vaccine responses
+    asserted 2026-02-11 · invalidated 2026-08-14 · two 2026 cohorts report higher
+    class II frequencies than earlier pipelines assumed
+→ v2 #3 [moderate] (active)
+    Class II epitopes contribute substantially to vaccine-induced responses
+```
+
+Two timestamps, deliberately: `valid_from`/`valid_until` for when the claim was
+true of the world, `asserted_at`/`invalidated_at` for when *we* thought so.
+That is what makes `neobrain history --as-of 2026-03-01` able to answer "what
+did I believe when I wrote that methods section?" — the question that actually
+comes up, months later, in front of a reviewer.
+
+### Procedural — rules learned from your corrections
+
+```bash
+neobrain rule add "I design a mouse vaccine study" \
+                  "check for an adjuvant-alone arm before anything else"
+```
+
+Not a fact about immunology, so it does not belong in `beliefs`. It is a
+procedure, and procedures are what turn a correction into a mistake that does
+not recur. Rules appear at the top of every session brief.
+
+### Core — the always-loaded tier
+
+`memory/CORE.md`: identity, project, standing preferences. ~2k token cap,
+enforced by `neobrain doctor` nagging you.
+
+### Why not just load everything
+
+"Read all my memory at startup" works for about a week. Then the context window
+fills with stale material and answer quality drops in a way that is hard to
+attribute. `neobrain brief` is the bounded payload — core in full, rules, recent
+corrections, corpus state, latest digest, pending approvals, beliefs due for
+review, open contradictions, where you left off. Everything else is one
+`recall` or `search` away, and nothing is lost.
 
 ### The approval gate is the important part
 
@@ -176,15 +245,76 @@ gate costs you thirty seconds a day.
 
 ---
 
-## Retrieval: why hybrid, not vectors
+## Reasoning, not just retrieval
 
-Keyword and vector search fail in opposite directions here.
+### Three retrieval legs, because they fail differently
 
 BM25 nails `HLA-A*02:01`, `NetMHCIIpan-4.3`, `Adpgk`, `NSG-SGM3` — the rare
 tokens that carry the meaning — and misses paraphrase. Vectors find "peptide
 presentation on class II" when you asked about "CD4 epitope display" and blur
-the alleles together. Reciprocal-rank fusion takes the union without needing the
-two score scales to be comparable, which they are not.
+the alleles together. Neither can answer a question whose evidence spans papers.
+
+The third leg is an **entity graph**. Ask *"why would a vaccine response be
+invisible in CT26?"* — a question sharing almost no wording with its answer —
+and the graph seeds on `CT26`, spreads activation, and surfaces the passage
+about gp70/AH1 immunodominance:
+
+```
+$ neobrain graph --path CT26 immunodominance
+CT26 → AH1 → immunodominance
+```
+
+Entity extraction is a curated domain gazetteer plus regex for things with
+strict formats (HLA alleles, mutation notation, tool names), **not** an LLM.
+LLM extraction hallucinates edges, and in a research assistant a fabricated
+relationship between a gene and a phenotype is exactly the failure you cannot
+afford. Aliases normalize (`HLA LOH` ≡ `HLA loss of heterozygosity`) so the
+graph does not fragment. Edges are weighted co-occurrence, and the tool says so
+every time it prints a path: *a co-occurrence path is a lead, not a finding.*
+
+Questions are also **decomposed** — split on conjunctions, plus one query per
+named entity — and the sub-results fused, which is what makes multi-hop
+questions retrievable at all. MMR diversification then stops the top ten
+passages being ten near-copies from one paper.
+
+### Evidence grading
+
+Every paper gets a tier from its own text: randomized trial (5) down through
+cohort, in vivo, in vitro, preprint, to review/editorial (0). Evidence packs
+lead with a read on collective strength:
+
+```
+**Evidence strength:** established: multiple higher-tier sources agree.
+7 passages from 4 distinct sources.
+```
+
+so the instruction to label claims *established / contested / single-paper* has
+something underneath it besides vibes.
+
+### Contradiction detection
+
+Every sweep scans new evidence against your stored beliefs and queues the
+tensions:
+
+```
+$ neobrain conflicts
+#4 against belief: MC38 neoantigen vaccination improves survival
+cue: explicit negative result; could not confirm (shared: MC38, neoantigen)
+in: Failure to replicate MC38 vaccine benefit (tier 3)
+    In MC38 tumours, neoantigen vaccination did not improve survival, and we
+    were unable to confirm the previously reported benefit.
+```
+
+The detector is shared entities + negation/reversal cues + numeric divergence —
+deliberately over-sensitive and explicitly *not* a verdict. Dismissing a false
+positive costs five seconds; missing a real contradiction costs you a wrong
+claim in a paper. Scientific claim verification (SciFact-style stance models)
+would improve precision here and is the obvious upgrade path.
+
+### Reciprocal-rank fusion
+
+RRF takes the union of the legs without needing their score scales to be
+comparable, which they are not.
 
 So **start with `embeddings.backend: none`.** Keyword-only retrieval over this
 literature is genuinely good. Add vectors when you notice yourself failing to
@@ -300,11 +430,46 @@ neobrain/
 ├── workspace/                 the only place the agent writes freely
 ├── neobrain/                  the package
 │   ├── sweep.py  digest.py  scoring.py  retrieve.py  embeddings.py
+│   ├── journal.py             append-only memory (immutable)
+│   ├── graph.py               entity graph + personalized PageRank
+│   ├── evidence.py            evidence tiers + contradiction detection
 │   ├── memory.py  tutor.py  db.py  cli.py  mcp_server.py
 │   └── sources/  europepmc · clinicaltrials · preprints · fulltext · local
 ├── docs/  DEPLOYMENT.md  SECURITY.md  WORKFLOWS.md
 └── brain.db                   SQLite: everything
 ```
+
+## Design notes and prior art
+
+The memory design follows where the 2026 agent-memory field landed, adapted for
+research work where a wrong claim is expensive:
+
+- **Three memory scopes** — episodic / semantic / procedural — are now the
+  standard taxonomy across [Mem0, Zep, Letta and
+  successors](https://atlan.com/know/best-ai-agent-memory-frameworks-2026/).
+- **Invalidate, never delete.** [Zep's Graphiti](https://www.getzep.com/ai-agents/temporal-knowledge-graph/)
+  gives every edge a validity interval and writes an invalidation timestamp
+  instead of dropping the row, so the graph can say what was believed and when.
+  NeoBrain's beliefs are bitemporal for the same reason, and the journal goes
+  further by being immutable at the storage layer.
+- **Memory-as-OS.** [Letta/MemGPT](https://github.com/NirDiamant/Agent_Memory_Techniques)
+  splits main context from recall and archival stores, paged on demand — which
+  is what `brief` + `recall` + `search` are.
+- **Graph-seeded multi-hop retrieval.** HippoRAG and the
+  [GraphRAG](https://atlan.com/know/advanced-rag-techniques/) family seed an
+  entity graph from the query and spread activation. NeoBrain does this with
+  deterministic extraction rather than LLM triple extraction, trading recall for
+  the guarantee that no edge is fabricated.
+- **Stance-based claim verification.** [SciFact](https://aclanthology.org/2020.emnlp-main.609/)
+  frames contradiction detection as SUPPORTS / REFUTES / NOINFO. The detector
+  here is the deterministic precursor to that, and a local stance model is the
+  natural upgrade.
+
+The one deliberate divergence: most of these systems let the agent write to
+memory autonomously, and [research on memory
+contamination](https://arxiv.org/pdf/2605.28009) is now catching up with why
+that is risky. Here, raw capture is automatic and immutable, but promotion to
+*authoritative* memory always passes through you.
 
 ## Tests
 

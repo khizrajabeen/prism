@@ -13,8 +13,11 @@ import shutil
 import sys
 import textwrap
 from pathlib import Path
+from sqlite3 import connect as sqlite3_connect
 
-from . import config, db, digest, memory, retrieve, scoring, tutor
+from . import (
+    config, db, digest, evidence, graph, journal, memory, retrieve, scoring, tutor,
+)
 from .sources import local as local_src
 
 BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
@@ -24,7 +27,7 @@ def _c(text: str, code: str) -> str:
     return text if not sys.stdout.isatty() else f"{code}{text}{RESET}"
 
 
-def _print_hits(hits: list[retrieve.Hit], snippet: int = 400) -> None:
+def _print_hits(hits: list[retrieve.Hit], snippet: int = 400, query: str = "") -> None:
     if not hits:
         print("No matches in the local corpus.")
         print(_c("That is a fact about the corpus, not about the literature. "
@@ -37,8 +40,9 @@ def _print_hits(hits: list[retrieve.Hit], snippet: int = 400) -> None:
             if h.url:
                 print(_c(f"    {h.url}", DIM))
         section = (h.heading or "n/a").split(" — ")[-1]
-        print(_c(f"    § {section} · {'+'.join(h.how)} · rrf={h.score}", DIM))
-        body = " ".join(h.text.split())[:snippet]
+        tier = f" · tier {h.evidence_tier}/5" if h.evidence_tier is not None else ""
+        print(_c(f"    § {section} · {'+'.join(h.how)} · rrf={h.score}{tier}", DIM))
+        body = h.snippet(query, snippet)
         print(textwrap.fill(body, width=96, initial_indent="    ", subsequent_indent="    "))
         print()
 
@@ -125,10 +129,22 @@ def cmd_status(args) -> int:
     con = db.connect()
     s = db.stats(con)
     print(_c("NeoBrain status", BOLD))
-    for key in ("papers", "papers_oa", "papers_read", "fulltext", "sections", "trials",
-                "trial_changes", "chunks", "embeddings", "beliefs", "beliefs_due",
-                "proposals_pending", "cards", "cards_due", "sessions"):
-        print(f"  {key:<18} {s[key]:,}" if isinstance(s[key], int) else f"  {key:<18} {s[key]}")
+    groups = [
+        ("corpus", ("papers", "papers_oa", "papers_read", "graded", "fulltext",
+                    "sections", "trials", "trial_changes")),
+        ("retrieval", ("chunks", "embeddings", "entities", "entity_edges")),
+        ("memory", ("journal", "rules", "beliefs", "beliefs_due", "conflicts_open",
+                    "proposals_pending", "sessions")),
+        ("teaching", ("cards", "cards_due")),
+    ]
+    for label, keys in groups:
+        print(_c(f"\n  {label}", BOLD))
+        for key in keys:
+            value = s.get(key, 0)
+            print(f"    {key:<18} {value:,}" if isinstance(value, int)
+                  else f"    {key:<18} {value}")
+    if s.get("journal_since"):
+        print(f"\n  remembering since  {s['journal_since'][:16]}")
     print(f"  {'last_sweep':<18} {s['last_sweep'] or 'never'}")
     print(f"  {'db':<18} {s['db_path']} ({s['db_mb']} MB)")
 
@@ -192,7 +208,7 @@ def cmd_search(args) -> int:
     else:
         hits = retrieve.search(args.query, k=args.k, cfg=cfg, con=con,
                                doc_kind=args.kind, use_vectors=not args.no_vectors)
-        _print_hits(hits)
+        _print_hits(hits, query=args.query)
     con.close()
     return 0
 
@@ -482,6 +498,177 @@ def cmd_card(args) -> int:
     return 0
 
 
+def cmd_remember(args) -> int:
+    """Write something to permanent, append-only memory."""
+    con = db.connect()
+    jid = journal.record(
+        con, args.text, kind=args.kind, topic=args.topic or "",
+        source=args.source or "user", importance=args.importance,
+    )
+    print(f"journal #{jid} — recorded permanently, and it cannot be edited or deleted")
+    con.close()
+    return 0
+
+
+def cmd_recall(args) -> int:
+    con = db.connect()
+    entries = journal.recall(
+        con, args.query or "", kind=args.kind, topic=args.topic,
+        since=args.since, limit=args.n,
+    )
+    if not entries:
+        print("Nothing in episodic memory matches.")
+    for e in entries:
+        print(journal.format_entry(e))
+        print()
+    if not args.query and not args.kind:
+        s = journal.stats(con)
+        print(_c(f"{s['total']:,} entries since {s['since'] or 'today'} · "
+                 + ", ".join(f"{k}:{v}" for k, v in list(s['by_kind'].items())[:6]), DIM))
+    con.close()
+    return 0
+
+
+def cmd_rule(args) -> int:
+    con = db.connect()
+    if args.action == "add":
+        rid = memory.add_rule(con, args.trigger, args.action_text,
+                              scope=args.scope or "", source=args.source or "user")
+        print(f"rule #{rid} — it will appear in every session brief from now on")
+    elif args.action == "list":
+        rules = memory.get_rules(con, scope=args.scope)
+        if not rules:
+            print("No rules learned yet. Add one with:\n"
+                  "  neobrain rule add 'I design a mouse vaccine study' "
+                  "'check for an adjuvant-alone arm'")
+        for r in rules:
+            fired = f" · fired {r['fired']}×" if r["fired"] else " · never fired"
+            print(_c(f"#{r['id']} when {r['trigger']}", BOLD))
+            print(f"    → {r['action']}")
+            print(_c(f"    {r['scope'] or 'general'}{fired} · from {r['source'] or 'user'}", DIM))
+    elif args.action == "retire":
+        memory.retire_rule(con, args.id, args.reason or "")
+        print(f"rule #{args.id} retired (kept in history)")
+    con.close()
+    return 0
+
+
+def cmd_graph(args) -> int:
+    con = db.connect()
+    if args.rebuild:
+        con.execute("DELETE FROM mentions")
+        con.execute("DELETE FROM entity_edges")
+        con.execute("UPDATE entities SET n_mentions=0")
+        con.commit()
+    if args.entity:
+        row = con.execute(
+            "SELECT id, name, kind, n_mentions FROM entities WHERE canonical=?"
+            " ORDER BY n_mentions DESC LIMIT 1", (args.entity.lower(),),
+        ).fetchone()
+        if row is None:
+            print(f"'{args.entity}' is not in the graph yet. "
+                  f"Run `neobrain graph --rebuild` after a sweep.")
+            con.close()
+            return 1
+        print(_c(f"{row['name']} ({row['kind']}) · {row['n_mentions']} mentions", BOLD))
+        print("\nmost strongly connected to:")
+        for nb in graph.neighbours(con, row["id"], limit=args.k):
+            print(f"  {nb['weight']:>6.2f}  {nb['name']:<32} ({nb['kind']})")
+    elif args.path:
+        a, b = args.path
+        route = graph.explain_path(con, a, b)
+        if route:
+            print(" → ".join(route))
+            print(_c("\nA co-occurrence path, not a causal claim: these concepts are "
+                     "discussed together through these intermediates. A lead, not a finding.", DIM))
+        else:
+            print(f"No path found between '{a}' and '{b}' within 3 hops.")
+    else:
+        report = graph.index_chunks(con)
+        s = graph.stats(con)
+        print(f"indexed {report['chunks']} chunks · {s['entities']} entities · "
+              f"{s['mentions']} mentions · {s['edges']} edges")
+        print("\nmost mentioned:")
+        for e in s["top"]:
+            print(f"  {e['n_mentions']:>5}  {e['name']:<32} ({e['kind']})")
+    con.close()
+    return 0
+
+
+def cmd_conflicts(args) -> int:
+    con = db.connect()
+    if args.scan:
+        opened = evidence.scan(con)
+        print(f"{opened} new candidate contradiction(s) opened")
+    rows = evidence.open_conflicts(con, limit=args.n)
+    if not rows:
+        print("No open conflicts.")
+        con.close()
+        return 0
+    for c in rows:
+        print("─" * 80)
+        print(_c(f"#{c['id']} against belief: {c['claim']}", BOLD))
+        print(_c(f"cue: {c['cue']}", DIM))
+        if c.get("title"):
+            print(_c(f"in: {c['title']} (tier {c.get('evidence_tier')}) {c.get('url') or ''}", DIM))
+        print(textwrap.fill(" ".join((c["passage"] or "").split())[:600], width=96,
+                            initial_indent="    ", subsequent_indent="    "))
+        if args.resolve:
+            try:
+                choice = input("\n[r]esolved / [d]ismiss / [s]kip ? ").strip().lower()[:1]
+            except (EOFError, KeyboardInterrupt):
+                break
+            if choice == "r":
+                evidence.resolve(con, c["id"], "resolved", input("note: ").strip())
+            elif choice == "d":
+                evidence.resolve(con, c["id"], "dismissed")
+        print()
+    con.close()
+    return 0
+
+
+def cmd_history(args) -> int:
+    """Show how a belief changed, or what was believed at a past date."""
+    con = db.connect()
+    if args.as_of:
+        beliefs = memory.as_of(con, args.as_of, topic=args.topic)
+        print(_c(f"What this brain believed on {args.as_of}:", BOLD))
+        if not beliefs:
+            print("  (nothing recorded yet at that point)")
+        for b in beliefs:
+            print(f"  #{b['id']} [{b['confidence']}] {b['claim']}")
+    else:
+        versions = memory.belief_history(con, args.id)
+        if not versions:
+            print(f"No belief #{args.id}")
+            con.close()
+            return 1
+        for v in versions:
+            state = v["status"]
+            marker = "→" if state == "active" else " "
+            print(_c(f"{marker} v{v['version'] or 1} #{v['id']} [{v['confidence']}] ({state})", BOLD))
+            print(f"    {v['claim']}")
+            print(_c(f"    asserted {(v['asserted_at'] or v['created_at'] or '')[:16]}"
+                     + (f" · invalidated {(v['invalidated_at'] or '')[:16]}" if v["invalidated_at"] else "")
+                     + (f" · {v['invalidated_reason']}" if v["invalidated_reason"] else ""), DIM))
+    con.close()
+    return 0
+
+
+def cmd_backup(args) -> int:
+    con = db.connect()
+    dest = Path(args.out) if args.out else config.HOME / f"backups/brain-{db.today()}.db"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    target = sqlite3_connect(dest)
+    with target:
+        con.backup(target)
+    target.close()
+    con.close()
+    size = round(dest.stat().st_size / 1e6, 2)
+    print(f"{dest} ({size} MB)")
+    return 0
+
+
 def cmd_progress(args) -> int:
     con = db.connect()
     print(tutor.progress(con))
@@ -667,6 +854,56 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--topic"); c.add_argument("--source")
     cs.add_parser("stats")
     p.set_defaults(func=cmd_card)
+
+    p = sub.add_parser("remember", help="write to permanent append-only memory")
+    p.add_argument("text")
+    p.add_argument("--kind", choices=list(journal.KINDS), default="observation")
+    p.add_argument("--topic")
+    p.add_argument("--source")
+    p.add_argument("--importance", type=int, choices=[1, 2, 3, 4, 5], default=2)
+    p.set_defaults(func=cmd_remember)
+
+    p = sub.add_parser("recall", help="search episodic memory (never deleted)")
+    p.add_argument("query", nargs="?", default="")
+    p.add_argument("-n", type=int, default=20)
+    p.add_argument("--kind", choices=list(journal.KINDS))
+    p.add_argument("--topic")
+    p.add_argument("--since", help="ISO date, e.g. 2026-01-01")
+    p.set_defaults(func=cmd_recall)
+
+    p = sub.add_parser("rule", help="procedural memory: learned ways of working")
+    rs = p.add_subparsers(dest="action", required=True)
+    r = rs.add_parser("add")
+    r.add_argument("trigger", help="when this applies")
+    r.add_argument("action_text", metavar="action", help="what to do")
+    r.add_argument("--scope")
+    r.add_argument("--source")
+    r = rs.add_parser("list"); r.add_argument("--scope")
+    r = rs.add_parser("retire"); r.add_argument("id", type=int); r.add_argument("--reason")
+    p.set_defaults(func=cmd_rule)
+
+    p = sub.add_parser("graph", help="entity graph: what connects to what")
+    p.add_argument("entity", nargs="?", help="show an entity's strongest connections")
+    p.add_argument("--path", nargs=2, metavar=("FROM", "TO"), help="find a path between two entities")
+    p.add_argument("-k", type=int, default=15)
+    p.add_argument("--rebuild", action="store_true")
+    p.set_defaults(func=cmd_graph)
+
+    p = sub.add_parser("conflicts", help="evidence that may contradict stored beliefs")
+    p.add_argument("-n", type=int, default=10)
+    p.add_argument("--scan", action="store_true", help="re-scan the corpus first")
+    p.add_argument("--resolve", action="store_true", help="decide each one interactively")
+    p.set_defaults(func=cmd_conflicts)
+
+    p = sub.add_parser("history", help="how a belief changed, or what was believed when")
+    p.add_argument("id", type=int, nargs="?", default=0)
+    p.add_argument("--as-of", help="ISO datetime: what did I believe then?")
+    p.add_argument("--topic")
+    p.set_defaults(func=cmd_history)
+
+    p = sub.add_parser("backup", help="snapshot the brain (safe while it is in use)")
+    p.add_argument("--out")
+    p.set_defaults(func=cmd_backup)
 
     p = sub.add_parser("progress", help="curriculum progress")
     p.set_defaults(func=cmd_progress)

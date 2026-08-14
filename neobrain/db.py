@@ -23,7 +23,7 @@ from typing import Any, Iterable, Sequence
 
 from . import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 -- ------------------------------------------------------------------ papers
@@ -213,6 +213,103 @@ CREATE TABLE IF NOT EXISTS meta (
     value       TEXT
 );
 
+-- ------------------------------------------------------------- journal
+-- Append-only episodic memory. Everything the brain ever learns lands here
+-- first, immediately, with no approval step — because the cost of losing an
+-- observation is higher than the cost of storing a bad one. Curation into
+-- beliefs/knowledge is a separate, reviewed process.
+--
+-- The triggers below make this table genuinely immutable at the storage layer:
+-- UPDATE and DELETE abort. Nothing in this system, including a confused agent
+-- and including me, can rewrite history here.
+CREATE TABLE IF NOT EXISTS journal (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TEXT NOT NULL,
+    kind        TEXT,      -- observation|correction|decision|preference|result|
+                           -- question|error|session|sweep|system
+    topic       TEXT,
+    text        TEXT NOT NULL,
+    source      TEXT,      -- paper id, URL, 'user', 'sweep', 'agent'
+    session_id  INTEGER,
+    entities    TEXT,
+    importance  INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_journal_at    ON journal(at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_kind  ON journal(kind);
+CREATE INDEX IF NOT EXISTS idx_journal_topic ON journal(topic);
+
+-- --------------------------------------------------- procedural memory
+-- The third memory scope: learned behaviours and rules, as distinct from
+-- facts (semantic) and events (episodic). "Always check for an adjuvant-alone
+-- arm" is not a fact about the world — it is a rule about how to work.
+CREATE TABLE IF NOT EXISTS rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger     TEXT NOT NULL,   -- when this applies
+    action      TEXT NOT NULL,   -- what to do
+    scope       TEXT,            -- domain area, for retrieval
+    source      TEXT,            -- how we learned it
+    created_at  TEXT,
+    active      INTEGER DEFAULT 1,
+    fired       INTEGER DEFAULT 0,
+    last_fired  TEXT
+);
+
+-- --------------------------------------------------- entity graph
+-- Entity-mediated retrieval, HippoRAG-style: seed the graph with the entities
+-- in a question, spread activation, and surface passages that are connected to
+-- the question through the literature rather than merely similar to its wording.
+CREATE TABLE IF NOT EXISTS entities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    kind        TEXT,       -- gene|hla|cell_line|mouse|tool|assay|mutation|concept
+    canonical   TEXT,
+    n_mentions  INTEGER DEFAULT 0,
+    UNIQUE(name, kind)
+);
+CREATE TABLE IF NOT EXISTS mentions (
+    entity_id   INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    chunk_id    INTEGER REFERENCES chunks(id) ON DELETE CASCADE,
+    PRIMARY KEY (entity_id, chunk_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mentions_chunk ON mentions(chunk_id);
+CREATE TABLE IF NOT EXISTS entity_edges (
+    a           INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    b           INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    weight      REAL DEFAULT 0,
+    PRIMARY KEY (a, b)
+);
+
+-- --------------------------------------------------- conflict queue
+-- Detected tension between a stored belief and newly ingested evidence.
+-- Surfaced for review rather than resolved automatically: the system's job is
+-- to notice the contradiction, yours is to adjudicate it.
+CREATE TABLE IF NOT EXISTS conflicts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    detected_at TEXT,
+    belief_id   INTEGER REFERENCES beliefs(id) ON DELETE CASCADE,
+    paper_id    TEXT,
+    chunk_id    INTEGER,
+    cue         TEXT,       -- what tripped the detector
+    passage     TEXT,
+    status      TEXT DEFAULT 'open',   -- open | resolved | dismissed
+    note        TEXT,
+    UNIQUE(belief_id, chunk_id)
+);
+CREATE INDEX IF NOT EXISTS idx_conflicts_status ON conflicts(status);
+
+-- --------------------------------------------------- answer provenance
+-- What evidence was in front of the model when it said something. Six months
+-- later, "why did it tell me that?" is an answerable question.
+CREATE TABLE IF NOT EXISTS answers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    asked_at    TEXT,
+    question    TEXT,
+    chunk_ids   TEXT,
+    paper_ids   TEXT,
+    session_id  INTEGER,
+    note        TEXT
+);
+
 -- ---------------------------------------------------------------- full text search
 CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
     title, abstract, authors, journal,
@@ -221,6 +318,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text, heading,
     content='chunks', content_rowid='id', tokenize='porter unicode61'
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS journal_fts USING fts5(
+    text, topic,
+    content='journal', content_rowid='id', tokenize='porter unicode61'
 );
 """
 
@@ -252,6 +353,25 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
     VALUES ('delete', old.id, old.text, old.heading);
     INSERT INTO chunks_fts(rowid, text, heading) VALUES (new.id, new.text, new.heading);
 END;
+
+-- The journal is append-only, enforced here rather than by convention. An
+-- agent that can quietly revise what it observed last month is not a memory,
+-- it is a rumour mill.
+CREATE TRIGGER IF NOT EXISTS journal_ai AFTER INSERT ON journal BEGIN
+    INSERT INTO journal_fts(rowid, text, topic) VALUES (new.id, new.text, new.topic);
+END;
+CREATE TRIGGER IF NOT EXISTS journal_no_update BEFORE UPDATE ON journal BEGIN
+    SELECT RAISE(ABORT, 'the journal is append-only: correct an entry by adding a new one');
+END;
+CREATE TRIGGER IF NOT EXISTS journal_no_delete BEFORE DELETE ON journal BEGIN
+    SELECT RAISE(ABORT, 'the journal is append-only: entries are never deleted');
+END;
+
+-- Mentions must not outlive their chunk, but the entity survives so its
+-- history and edges remain queryable.
+CREATE TRIGGER IF NOT EXISTS mentions_count_ai AFTER INSERT ON mentions BEGIN
+    UPDATE entities SET n_mentions = n_mentions + 1 WHERE id = new.entity_id;
+END;
 """
 
 
@@ -276,9 +396,34 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return con
 
 
+# Columns added after v3. CREATE TABLE IF NOT EXISTS does nothing for a table
+# that already exists, so new columns need explicit ALTERs on an existing brain.
+_ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    # (table, column, definition)
+    ("beliefs", "valid_from", "TEXT"),      # when the claim became true in the world
+    ("beliefs", "valid_until", "TEXT"),     # when it stopped being true (NULL = still holds)
+    ("beliefs", "asserted_at", "TEXT"),     # when we came to believe it
+    ("beliefs", "invalidated_at", "TEXT"),  # when we stopped believing it
+    ("beliefs", "invalidated_reason", "TEXT"),
+    ("beliefs", "root_id", "INTEGER"),      # first version in this claim's lineage
+    ("beliefs", "version", "INTEGER DEFAULT 1"),
+    ("papers", "study_type", "TEXT"),
+    ("papers", "evidence_tier", "INTEGER"),
+]
+
+
+def _add_missing_columns(con: sqlite3.Connection) -> None:
+    for table, column, definition in _ADDED_COLUMNS:
+        cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def _migrate(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
+    _add_missing_columns(con)
     con.executescript(TRIGGERS)
+
     cur = con.execute("SELECT value FROM meta WHERE key='schema_version'")
     row = cur.fetchone()
     if row is None:
@@ -290,7 +435,13 @@ def _migrate(con: sqlite3.Connection) -> None:
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('created_at', ?)", (now(),)
         )
     elif int(row["value"]) < SCHEMA_VERSION:
-        # Schema is additive so far: CREATE ... IF NOT EXISTS above does the work.
+        # Backfill the bitemporal fields for beliefs recorded before v4, so
+        # "what did I believe on date X?" works over the whole history.
+        con.execute(
+            "UPDATE beliefs SET asserted_at = COALESCE(asserted_at, created_at),"
+            " valid_from = COALESCE(valid_from, created_at),"
+            " root_id = COALESCE(root_id, id) WHERE asserted_at IS NULL OR root_id IS NULL"
+        )
         con.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
         )
@@ -430,6 +581,13 @@ def stats(con: sqlite3.Connection) -> dict[str, Any]:
             today(),
         ),
         "sessions": one("SELECT COUNT(*) FROM sessions"),
+        "journal": one("SELECT COUNT(*) FROM journal"),
+        "journal_since": one("SELECT MIN(at) FROM journal"),
+        "rules": one("SELECT COUNT(*) FROM rules WHERE active=1"),
+        "entities": one("SELECT COUNT(*) FROM entities"),
+        "entity_edges": one("SELECT COUNT(*) FROM entity_edges"),
+        "conflicts_open": one("SELECT COUNT(*) FROM conflicts WHERE status='open'"),
+        "graded": one("SELECT COUNT(*) FROM papers WHERE evidence_tier IS NOT NULL"),
         "last_sweep": one("SELECT run_at FROM runs WHERE kind='sweep' ORDER BY id DESC LIMIT 1"),
         "db_path": str(config.DB_PATH),
         "db_mb": round(config.DB_PATH.stat().st_size / 1e6, 2) if config.DB_PATH.exists() else 0,
