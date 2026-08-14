@@ -46,15 +46,26 @@ The empty quadrant is the product.
 
 ### What we do that none of them do
 
-**1. Extraction with sentence-level provenance, and "not reported" as data.**
+**1. Extraction with sentence-level provenance, and three kinds of empty.**
 Elicit extracts into custom columns with an LLM. Ours is pattern-based: lower
 recall on odd phrasing, zero fabrication, and **every cell opens the sentence
 it came from**. The difference that matters is the empty cell — in an LLM table
 a blank is ambiguous between "the paper did not report it" and "the model
-missed it". Here `not reported` is an explicit value, which turns a column into
-a finding:
+missed it". Here an empty cell is always one of three explicit values:
 
-> 2 of 3 MC38 vaccine papers do not report a power calculation.
+| cell | meaning | citable? |
+| --- | --- | --- |
+| `not reported` | the methods were read; the field is absent | **yes** — a finding about the paper |
+| `abstract only` | only an abstract was available | no — abstracts omit this by convention |
+| `not checked` | nothing has extracted this paper | no — a gap in our work, not theirs |
+
+Gap rates count only the papers that were actually read, so the claim is
+
+> 2 of the 3 MC38 vaccine papers we read do not report a power calculation
+
+rather than a percentage whose denominator quietly includes papers nobody
+opened. No other extraction tool we know of draws this line, and it is the
+line that makes an empty column worth reading downwards.
 
 **2. The methods audit.** Every paper scored against what ARRIVE and CONSORT
 have asked for since 2010 — group sizes, randomization, blinding, power,
@@ -69,7 +80,17 @@ We weight support by `design tier × reporting completeness`, and show both
 components rather than one opaque number. We will never match 1.6B citations;
 we are answering a different question.
 
-**4. Evidence routed to your own hypotheses.**
+**4. Retraction watch that propagates to what you believe.**
+Every tool can tell you a paper was retracted. This one tells you *which of your
+beliefs, hypotheses, and checked claims rest on it* — because the work ledger
+and the corpus are in the same database — and it says so at the top of the
+session brief and the Today page before anything else, since a retraction is a
+correction to something you already wrote down as true. It also refuses to
+imply a clean bill of health it has not earned: `unknown` (never checked) is
+reported as unknown, never folded into `clean`, and every count comes with how
+much of the library has actually been checked.
+
+**5. Evidence routed to your own hypotheses.**
 
 ```
 hypothesis #1: Class II epitopes improve durability of MC38 vaccine responses
@@ -169,6 +190,47 @@ Forward citations are how you learn your seed paper was refuted in 2025.
 
 ## Accuracy: how it earns trust
 
+**It measures itself, and shows the number:**
+
+```bash
+neobrain eval          # the full report
+neobrain doctor        # the headline figures, alongside the health check
+```
+
+```
+MEASURED PERFORMANCE
+
+  Extraction (n=12 papers)   ← indicative only
+    precision 1.00 · recall 0.93 · F1 0.96
+
+  Methods audit (n=12)
+    Cohen's κ 0.90 · raw agreement 0.95 — almost perfect agreement with the human reader
+```
+
+The gold set ships as 12 hand-written passages so the harness runs on a fresh
+clone, and it says "indicative only" until you have annotated 20 papers you
+actually read (`neobrain eval add`). Precision is expected to stay at 1.00 —
+pattern extraction cannot fabricate, so anything lower is a pattern matching the
+wrong span, and the report names the field. Absence is annotated explicitly,
+which is what makes `not reported` a measured claim rather than an empty cell.
+
+Two things the harness refuses to do, both learned by watching it get them
+wrong: it does not score an annotation whose paper is not in the corpus (that
+measures the size of your library, not the quality of the extractor), and it
+prints "not measurable" rather than a fabricated `0.00` when retrieval has
+nothing to measure.
+
+**Nothing you cite is silently retracted:**
+
+```bash
+neobrain retractions --sweep       # Crossref + PubMed, papers you depend on first
+```
+
+Flagged papers are traced to every belief, hypothesis, experiment, and checked
+claim that rests on them, and that list — not the list of retracted papers —
+is what the session brief shows first. Coverage is always reported alongside:
+"0 flagged" means nothing without "out of how many checked, and when".
+
 **Every answer carries its shape before its content:**
 
 ```
@@ -264,6 +326,11 @@ neobrain peptide junctions SIINFEKL,ASMTNMELM --linker AAY
 neobrain models --recommend structure
 neobrain clinic --tumour pancreatic --variants "KRAS G12D,B2M" --hla "HLA-C*08:02"
 
+# trust
+neobrain eval                                     # measured precision/recall/κ
+neobrain eval add MED:39012345 --sample-size 10 --randomization yes --power no
+neobrain retractions --sweep                      # --cited to check only what you cite
+
 # housekeeping
 neobrain web · doctor · status · backup · graph · conflicts · quiz · teach 05
 ```
@@ -324,7 +391,7 @@ neobrain/
 ## Tests
 
 ```bash
-pytest        # 167 tests
+pytest        # 205 tests
 ```
 
 They cover the parts that fail silently: FTS escaping (`HLA-A*02:01` must not
@@ -346,6 +413,12 @@ listing the tools could not reveal.
 - Clinical actionability uses a small hand-maintained table, not OncoKB/CIViC.
 - Trial matching cannot read eligibility criteria.
 - The claim checker is lexical, not entailment.
+- Retraction watch depends on Crossref and PubMed, both of which lag the actual
+  notice — often by weeks. It narrows the window in which you cite a retracted
+  paper; it does not close it.
+- The measured numbers come from a 12-passage bootstrap set until you annotate
+  real papers, and passages written to be extracted are easier than real ones.
+  Treat them as an optimistic ceiling; the report says so on every run.
 
 Each of these is stated in the product where you meet it, not only here. A tool
 that hides its limits gets trusted in exactly the situations where it should

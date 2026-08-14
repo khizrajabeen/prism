@@ -23,7 +23,7 @@ from typing import Any, Iterable, Sequence
 
 from . import config
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 -- ------------------------------------------------------------------ papers
@@ -335,6 +335,20 @@ CREATE TABLE IF NOT EXISTS extractions (
 CREATE INDEX IF NOT EXISTS idx_extractions ON extractions(paper_id, field);
 CREATE INDEX IF NOT EXISTS idx_extractions_field ON extractions(field);
 
+-- What each extraction run actually looked at. Without this, an empty cell has
+-- two incompatible meanings that get silently merged: "the paper does not
+-- report this" (a finding about the paper, worth citing) and "nothing has read
+-- this paper yet" (a finding about us, worth fixing). Recording the scope of
+-- the run is what lets the comparison table tell them apart.
+CREATE TABLE IF NOT EXISTS extraction_runs (
+    paper_id    TEXT PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+    extracted_at TEXT,
+    scope       TEXT,        -- fulltext | abstract | none
+    sections    TEXT,        -- comma-separated section kinds actually searched
+    fields      TEXT,        -- comma-separated fields the run looked for
+    n_values    INTEGER DEFAULT 0
+);
+
 -- ------------------------------------------------- guided discovery
 -- Saved searches from the Research workflow. Keeping the plan alongside the
 -- results is what makes a literature search reproducible: six months later you
@@ -564,6 +578,12 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("beliefs", "version", "INTEGER DEFAULT 1"),
     ("papers", "study_type", "TEXT"),
     ("papers", "evidence_tier", "INTEGER"),
+    # Retraction watch. NULL means never checked, which is not the same as
+    # clean — `retraction_checked_at` is what tells the two apart.
+    ("papers", "retraction_status", "TEXT"),      # retracted | concern | corrected | clean
+    ("papers", "retraction_note", "TEXT"),
+    ("papers", "retraction_url", "TEXT"),
+    ("papers", "retraction_checked_at", "TEXT"),
 ]
 
 

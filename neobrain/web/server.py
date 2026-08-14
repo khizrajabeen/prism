@@ -357,6 +357,8 @@ class Api:
     # ------------------------------------------------------------ the work
     def today(self, p, b):
         """The inbox: what changed, what needs a decision, what the work needs."""
+        from .. import retractions
+
         con = db.connect()
         try:
             s = db.stats(con)
@@ -364,6 +366,13 @@ class Api:
             return {
                 "date": db.today(),
                 "stats": s,
+                # First key the page renders, and it renders as a blocking
+                # banner. Everything else on Today is downstream of whether
+                # what you believe still has the evidence you filed it under.
+                "retractions": {
+                    "affected": retractions.affected(con)[:12],
+                    "coverage": retractions.coverage(con),
+                },
                 "science": science.stats(con),
                 "next": science.whats_next(con),
                 "needs_you": {
@@ -638,6 +647,35 @@ class Api:
         finally:
             con.close()
 
+    # ---------------------------------------------------------- retractions
+    def retractions_view(self, p, b):
+        from .. import retractions
+
+        con = db.connect()
+        try:
+            flagged = [dict(r) for r in con.execute(
+                "SELECT id, title, journal, retraction_status, retraction_note, "
+                "retraction_url, retraction_checked_at FROM papers "
+                "WHERE retraction_status IS NOT NULL AND retraction_status != 'clean' "
+                "ORDER BY retraction_checked_at DESC")]
+            return {"affected": retractions.affected(con),
+                    "flagged_papers": flagged,
+                    "coverage": retractions.coverage(con)}
+        finally:
+            con.close()
+
+    def retractions_sweep(self, p, b):
+        from .. import retractions
+
+        con = db.connect()
+        try:
+            result = retractions.sweep(
+                con, limit=int(b.get("limit", 50)), only_cited=bool(b.get("cited")))
+            result["affected"] = retractions.affected(con)
+            return result
+        finally:
+            con.close()
+
     # ---------------------------------------------------------------- sweep
     def run_sweep(self, p, b):
         from .. import sweep as sweep_mod
@@ -647,6 +685,8 @@ class Api:
 
 ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/today"): "today",
+    ("GET", "/api/retractions"): "retractions_view",
+    ("POST", "/api/retractions/sweep"): "retractions_sweep",
     ("POST", "/api/extract/matrix"): "extract_matrix",
     ("GET", "/api/extract/audit"): "extract_audit",
     ("GET", "/api/extract/fields"): "extract_fields",

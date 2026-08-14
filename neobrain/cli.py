@@ -1085,6 +1085,62 @@ def cmd_score(args) -> int:
     return 0
 
 
+def cmd_retractions(args) -> int:
+    from . import retractions
+
+    con = db.connect()
+    if args.sweep:
+        print("Checking Crossref and PubMed, papers you depend on first…")
+        r = retractions.sweep(con, limit=args.limit, only_cited=args.cited,
+                              progress=(lambda m: print(m)) if args.verbose else None)
+        print(f"\n{r['checked']} checked · {r['flagged']} flagged · "
+              f"{r['unreachable']} unreachable · {r['due']} were due of "
+              f"{r['considered']} checkable")
+        if r["unreachable"]:
+            print(_c("  Unreachable is not clean. Those papers keep their previous "
+                     "status and stay due.", DIM))
+
+    cov = retractions.coverage(con)
+    hits = retractions.affected(con)
+
+    if hits:
+        print()
+        print(_c(f"{len(hits)} dependency(ies) on flagged papers", BOLD))
+        for h in hits:
+            print(f"  [{h['status'].upper()}] {h['kind']} #{h['id']}: "
+                  f"{' '.join(str(h['text']).split())[:88]}")
+            print(_c(f"      cites {h['paper_id']} — {str(h['paper_title'])[:72]}", DIM))
+            if h["note"]:
+                print(_c(f"      {h['note']}", DIM))
+            if h["url"]:
+                print(_c(f"      {h['url']}", DIM))
+    else:
+        flagged = con.execute(
+            "SELECT id, title, retraction_status, retraction_note FROM papers "
+            "WHERE retraction_status IS NOT NULL AND retraction_status != 'clean'"
+        ).fetchall()
+        if flagged:
+            print(f"\n{len(flagged)} flagged paper(s) in the library, "
+                  f"none of them cited by anything you have written:")
+            for f in flagged:
+                print(f"  [{f['retraction_status'].upper()}] {f['id']} "
+                      f"{(f['title'] or '')[:70]}")
+        else:
+            print("\nNothing you depend on is flagged.")
+
+    # Never a bare reassurance: "no retractions found" is meaningless without
+    # "out of how many checked, and when".
+    print(_c(f"\nCoverage: {cov['checked']}/{cov['checkable']} checkable papers checked "
+             f"({cov['fraction']:.0%}) · {cov['unchecked']} never checked"
+             + (f" · last check {cov['newest_check'][:10]}" if cov["newest_check"] else ""),
+             DIM))
+    if cov["unchecked"]:
+        print(_c("An unchecked paper is not a clean paper. "
+                 "`neobrain retractions --sweep` to close the gap.", DIM))
+    con.close()
+    return 1 if any(h["status"] in retractions.BLOCKING for h in hits) else 0
+
+
 _EVAL_FIELDS = [
     # flag              gold field             help
     ("sample-size",     "sample_size",         "n per group, as reported"),
@@ -1498,6 +1554,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("title")
     p.add_argument("--abstract")
     p.set_defaults(func=cmd_score)
+
+    p = sub.add_parser("retractions",
+                       help="what you depend on that has been retracted or flagged")
+    p.add_argument("--sweep", action="store_true", help="check Crossref and PubMed now")
+    p.add_argument("--limit", type=int, default=50, help="papers to check this run")
+    p.add_argument("--cited", action="store_true",
+                   help="only check papers something in the brain cites")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=cmd_retractions)
 
     p = sub.add_parser("eval", help="measure extraction, audit, and retrieval against gold")
     p.add_argument("--json", action="store_true")

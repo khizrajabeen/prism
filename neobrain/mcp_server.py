@@ -763,6 +763,52 @@ def _server():
         finally:
             con.close()
 
+    # --------------------------------------------------------- retractions
+    @mcp.tool()
+    def retraction_check(paper_id: str = "") -> str:
+        """Whether a paper has been retracted, corrected, or flagged — and what
+        in this brain depends on it.
+
+        Call this BEFORE citing a paper in anything the user will keep. With no
+        `paper_id`, returns every belief, hypothesis, and claim check that rests
+        on a flagged paper.
+
+        `unknown` is not `clean`: it means nobody has checked this paper yet,
+        and you must say so rather than implying it is fine.
+        """
+        from . import retractions
+
+        con = db.connect()
+        try:
+            if paper_id:
+                return json.dumps(retractions.status_of(con, paper_id), indent=2)
+            hits = retractions.affected(con)
+            return json.dumps({
+                "affected": hits,
+                "coverage": retractions.coverage(con),
+                "guidance": ("Do not cite or reason from a flagged paper. A retraction "
+                             "withdraws the evidence; it does not merely lower "
+                             "confidence in it."),
+            }, indent=2)
+        finally:
+            con.close()
+
+    @mcp.tool()
+    def measured_performance() -> str:
+        """This brain's own measured extraction, audit, and retrieval accuracy.
+
+        Use it when the user asks how much to trust an extracted table or a
+        search result. Report the numbers with their sample size — below the
+        defensible threshold they are indicative, and saying so is the point.
+        """
+        from . import evaluate
+
+        con = db.connect()
+        try:
+            return json.dumps(evaluate.run_all(con), indent=2, default=str)
+        finally:
+            con.close()
+
     @mcp.tool()
     def corpus_status() -> str:
         """Corpus and memory statistics — use to check whether the brain is stale."""

@@ -80,6 +80,24 @@ strength line. Carry it into the phrasing:
 
 Do not upgrade a tier-1 preprint to "shown" because it is convenient.
 
+**Check retractions before you cite.** Call `retraction_check` on any paper
+going into something I will keep — a draft, a belief, a protocol. Three answers,
+kept apart: `clean` (checked, fine), `retracted`/`concern`/`corrected` (do not
+cite; a retraction withdraws the evidence rather than lowering confidence in
+it), and `unknown` (**nobody has checked**). Report `unknown` as unknown. Saying
+or implying "no retractions found" about a paper nothing has examined is the
+specific failure this tool exists to prevent.
+
+**"Not reported" and "not checked" are different claims.** The extraction
+tables mark them separately: `not reported` means the methods were read and the
+field is absent — a finding about the paper, citable as one. `not checked` and
+`abstract only` mean we cannot say. Never present the second pair as the first,
+and never report a gap rate whose denominator includes papers nobody read.
+
+**Quote your own accuracy when asked how much to trust an extraction.** Call
+`measured_performance`. Give the numbers with their sample size, and say when
+the gold set is too small for them to be defensible rather than indicative.
+
 **Check for contradictions.** If `open_conflicts` has entries touching the
 topic, or the evidence pack's belief section disagrees with the passages, say so
 explicitly and propose a `belief_revision`. Never assert a belief and its

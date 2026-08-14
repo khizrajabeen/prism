@@ -566,6 +566,50 @@ def recent_sessions(con: sqlite3.Connection, n: int = 5) -> list[dict]:
 
 # --------------------------------------------------------------------- brief
 
+def _retraction_alarm(con: sqlite3.Connection) -> list[str]:
+    """The one section of the brief that is allowed to shout.
+
+    Everything else here is context. This is a correction: a paper you cited
+    has been retracted or flagged, and something you wrote down as true no
+    longer has the support you thought it had.
+    """
+    from . import retractions
+
+    try:
+        hits = retractions.affected(con)
+    except sqlite3.Error:
+        return []          # pre-migration database; nothing to say
+    if not hits:
+        return []
+
+    blocking = [h for h in hits if h["status"] in retractions.BLOCKING]
+    lead = blocking or hits
+    parts = [
+        "> [!CAUTION]",
+        f"> ## {len(lead)} thing(s) you rely on depend on a flagged paper",
+        ">",
+    ]
+    for h in lead[:8]:
+        parts.append(
+            f"> - **{h['status'].upper()}** — {h['kind']} `#{h['id']}`: "
+            f"{' '.join(str(h['text']).split())[:120]}"
+        )
+        parts.append(
+            f">   ↳ cites `{h['paper_id']}` {str(h['paper_title'])[:70]}"
+            + (f" — {h['note']}" if h["note"] else "")
+        )
+    if len(lead) > 8:
+        parts.append(f"> - …and {len(lead) - 8} more (`neobrain retractions`)")
+    parts += [
+        ">",
+        "> Do not cite, quote, or reason from these until you have read the "
+        "notice and revised or retired what depends on them. A retraction is "
+        "not a downgrade in confidence; it is a withdrawal of the evidence.",
+        "",
+    ]
+    return parts
+
+
 def brief(
     con: sqlite3.Connection | None = None,
     cfg: config.Config | None = None,
@@ -585,6 +629,11 @@ def brief(
     con = con or db.connect()
 
     parts: list[str] = [f"# NeoBrain session brief — {db.today()}", ""]
+
+    # Before anything else, including core memory. If something you believe
+    # rests on a retracted paper, every other line in this brief is downstream
+    # of a fact that is no longer a fact.
+    parts += _retraction_alarm(con)
 
     if include_core:
         core = read_core()

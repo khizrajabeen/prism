@@ -62,7 +62,28 @@ class Extraction:
         }
 
 
+# Three states, not two. The difference between the second and the third is the
+# difference between a claim about the paper and a claim about our own coverage,
+# and merging them is how a comparison table ends up full of confident-looking
+# blanks that nobody can cite.
+#
+#   NOT_REPORTED  we read the methods and the paper does not say. A finding.
+#   NOT_CHECKED   nothing has extracted this paper yet. A gap in our work.
+#   ABSTRACT_ONLY we read an abstract. Absence there means almost nothing —
+#                 abstracts omit randomization and blinding as a matter of
+#                 house style, not as a matter of study design.
 NOT_REPORTED = "not reported"
+NOT_CHECKED = "not checked"
+ABSTRACT_ONLY = "abstract only"
+
+# What a missing value is allowed to mean, given the scope of the run that
+# produced it. Only `fulltext` licenses the strong reading.
+_ABSENCE_MEANING = {
+    "fulltext": (NOT_REPORTED, "methods text was searched and the field is absent"),
+    "abstract": (ABSTRACT_ONLY, "only the abstract was available — absence is uninformative"),
+    "none": (NOT_CHECKED, "no text to search"),
+    "": (NOT_CHECKED, "this paper has not been extracted"),
+}
 
 
 def _sentences(text: str) -> list[str]:
@@ -303,6 +324,18 @@ def _context_for(term: str, text: str, width: int = 320) -> str:
     return ("…" if start else "") + text[start : start + width].strip() + "…"
 
 
+def run_scope(con: sqlite3.Connection, paper_id: str) -> tuple[str, list[str]]:
+    """What text an extraction of this paper would actually have to work with."""
+    kinds = [r["kind"] or "body" for r in con.execute(
+        "SELECT DISTINCT kind FROM sections WHERE paper_id=?", (paper_id,))]
+    if kinds:
+        return "fulltext", sorted(kinds)
+    row = con.execute("SELECT abstract FROM papers WHERE id=?", (paper_id,)).fetchone()
+    if row is not None and (row["abstract"] or "").strip():
+        return "abstract", ["abstract"]
+    return "none", []
+
+
 def store(con: sqlite3.Connection, paper_id: str,
           extractions: dict[str, list[Extraction]]) -> int:
     con.execute("DELETE FROM extractions WHERE paper_id=?", (paper_id,))
@@ -314,8 +347,43 @@ def store(con: sqlite3.Connection, paper_id: str,
         """INSERT INTO extractions(paper_id, field, value, unit, evidence, section,
                                    confidence, extracted_at)
            VALUES (?,?,?,?,?,?,?,?)""", rows)
+
+    # Record the run itself, even when it found nothing. A run that found
+    # nothing is the whole basis for saying "the paper does not report this"
+    # rather than "we have not looked" — so it is exactly the case where
+    # writing no row at all would lose the information that matters.
+    scope, sections = run_scope(con, paper_id)
+    con.execute(
+        """INSERT INTO extraction_runs(paper_id, extracted_at, scope, sections,
+                                       fields, n_values)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(paper_id) DO UPDATE SET
+               extracted_at=excluded.extracted_at, scope=excluded.scope,
+               sections=excluded.sections, fields=excluded.fields,
+               n_values=excluded.n_values""",
+        (paper_id, db.now(), scope, ",".join(sections), ",".join(ALL_FIELDS), len(rows)))
     con.commit()
     return len(rows)
+
+
+def run_for(con: sqlite3.Connection, paper_id: str) -> dict[str, Any] | None:
+    row = con.execute(
+        "SELECT * FROM extraction_runs WHERE paper_id=?", (paper_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def absence_state(run: dict[str, Any] | None, field: str) -> tuple[str, str]:
+    """What an empty cell means, given what the run that produced it could see.
+
+    Returns (state, why). `state` is one of NOT_REPORTED, ABSTRACT_ONLY,
+    NOT_CHECKED — never a bare blank, because a blank invites the reader to
+    supply their own interpretation and they will supply the flattering one.
+    """
+    if run is None:
+        return _ABSENCE_MEANING[""]
+    if field not in (run.get("fields") or "").split(","):
+        return NOT_CHECKED, "this field was not part of that extraction run"
+    return _ABSENCE_MEANING.get(run.get("scope") or "", _ABSENCE_MEANING[""])
 
 
 def extract_corpus(con: sqlite3.Connection, *, limit: int | None = None,
@@ -351,9 +419,19 @@ def matrix(con: sqlite3.Connection, paper_ids: list[str],
            fields: list[str] | None = None) -> dict[str, Any]:
     """A comparison table across papers, every cell carrying its provenance.
 
-    Cells are one of: a value with its source sentence, or the explicit string
-    "not reported". The second is not a hole in the table — it is a finding
-    about the paper, and it is why the columns are worth reading downwards.
+    Cells are one of four things, and keeping the last three apart is the point:
+
+    * a **value**, with the sentence it came from;
+    * **not reported** — we read the methods and the paper does not say. A
+      finding about the paper, and citable as one;
+    * **abstract only** — we read an abstract. Abstracts omit randomization and
+      blinding by convention, so absence there says nothing about the study;
+    * **not checked** — nothing has extracted this paper. A gap in our work,
+      not in theirs.
+
+    Collapsing these into one blank cell is what makes most extraction tables
+    unusable downwards: you cannot tell a field the literature neglects from a
+    field the tool neglected.
     """
     fields = fields or ["sample_size", "model_system", "randomization", "blinding",
                         "power_calculation", "controls", "statistical_test",
@@ -367,12 +445,17 @@ def matrix(con: sqlite3.Connection, paper_ids: list[str],
         f"FROM papers WHERE id IN ({ph})", paper_ids).fetchall()}
 
     rows = []
-    gaps = {f: 0 for f in fields}
+    gaps = {f: 0 for f in fields}          # the paper does not report it
+    unknown = {f: 0 for f in fields}       # we cannot say either way
+    unchecked_papers: list[str] = []
     for pid in paper_ids:
         paper = papers.get(pid)
         if not paper:
             continue
         ex = get_extractions(con, pid)
+        run = run_for(con, pid)
+        if run is None:
+            unchecked_papers.append(pid)
         cells = {}
         for f in fields:
             items = ex.get(f) or []
@@ -382,26 +465,47 @@ def matrix(con: sqlite3.Connection, paper_ids: list[str],
                     "evidence": items[0]["evidence"],
                     "section": items[0]["section"],
                     "confidence": items[0]["confidence"],
-                    "reported": True,
+                    "reported": True, "state": "reported",
                 }
-            else:
-                cells[f] = {"value": NOT_REPORTED, "evidence": "", "reported": False}
+                continue
+            state, why = absence_state(run, f)
+            cells[f] = {"value": state, "evidence": "", "reported": False,
+                        "state": state, "why": why}
+            if state == NOT_REPORTED:
                 gaps[f] += 1
+            else:
+                unknown[f] += 1
         rows.append({
             "paper_id": pid, "title": paper["title"], "authors": paper["authors"],
             "journal": paper["journal"], "year": str(paper["pub_date"] or "")[:4],
             "url": paper["url"], "tier": paper["evidence_tier"], "cells": cells,
+            "scope": (run or {}).get("scope", ""),
         })
 
     n = len(rows) or 1
+    def _gap_line(f: str) -> str:
+        # The denominator is papers we could actually judge, not papers in the
+        # table. "3/10 do not report this" is a different claim from "3 of the
+        # 4 we have read do not report this", and the second is the true one.
+        judged = n - unknown[f]
+        if judged <= 0:
+            return f"not judgeable — no full text read for any of the {n} papers"
+        line = f"{gaps[f]}/{judged} papers that were read do not report this"
+        if unknown[f]:
+            line += f" ({unknown[f]} not judgeable)"
+        return line
+
     return {
-        "fields": fields, "rows": rows, "gaps": gaps,
-        "gap_summary": {f: f"{gaps[f]}/{n} papers do not report this" for f in fields},
+        "fields": fields, "rows": rows, "gaps": gaps, "unknown": unknown,
+        "unchecked_papers": unchecked_papers,
+        "gap_summary": {f: _gap_line(f) for f in fields},
         "note": ("Every reported cell links to the sentence it came from. "
                  "Extraction is pattern-based rather than model-generated: it cannot "
-                 "invent a value, and it will miss unusually-phrased reporting. Treat "
-                 f"'{NOT_REPORTED}' as 'not found by a literal reading' and check the "
-                 "paper before citing the absence."),
+                 "invent a value, and it will miss unusually-phrased reporting. "
+                 f"'{NOT_REPORTED}' means the methods were read and the field is "
+                 f"absent — a finding about the paper. '{ABSTRACT_ONLY}' and "
+                 f"'{NOT_CHECKED}' mean we cannot say, and are excluded from the gap "
+                 "counts rather than quietly counted as absences."),
     }
 
 

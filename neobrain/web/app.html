@@ -881,6 +881,47 @@ async function viewToday(T) {
   const nodes = [...head("Today", "What changed, what needs a decision, and what the work needs next."),
                  voiceConsole()];
 
+  // 0. Retractions, above everything including the voice console's own output.
+  //    A retraction is not a notification, it is a correction to something you
+  //    have already written down as true, so it is allowed to interrupt.
+  const rx = d.retractions || {};
+  if ((rx.affected || []).length) {
+    const blocking = rx.affected.filter(a => a.status === "retracted" || a.status === "concern");
+    const show = blocking.length ? blocking : rx.affected;
+    nodes.push(el("div", { class: "card", style: "border-color:var(--danger);border-width:2px" },
+      el("h2", { style: "margin-top:0;color:var(--danger)" },
+        show.length + " thing" + (show.length === 1 ? "" : "s") + " you rely on cite a flagged paper"),
+      show.slice(0, 8).map(a => el("div", { class: "hit" },
+        el("div", { class: "t" },
+          el("span", { class: "pill bad" }, a.status), " ",
+          a.kind, " #", String(a.id), ": ", String(a.text || "").slice(0, 140)),
+        el("div", { class: "m" }, "cites ", a.paper_id, " — ", String(a.paper_title || "").slice(0, 90),
+          a.note ? " · " + a.note : ""),
+        a.url ? el("div", { class: "m" },
+          el("a", { href: a.url, target: "_blank", rel: "noopener" }, "the notice")) : null)),
+      el("div", { class: "note" },
+        "A retraction withdraws the evidence; it does not merely lower confidence in "
+        + "it. Revise or retire what depends on these before citing them anywhere."),
+      el("div", { class: "row", style: "margin-top:10px" },
+        el("button", { class: "btn sm", onclick: async () => {
+          await api("/api/retractions/sweep", { body: { limit: 50, cited: true } });
+          viewToday(T);
+        } }, "Re-check now"))));
+  } else if (rx.coverage && rx.coverage.unchecked) {
+    // Silence is not the same as a clean bill of health, and saying so costs
+    // one line.
+    nodes.push(el("div", { class: "card" },
+      el("div", { class: "m" },
+        rx.coverage.checked + " of " + rx.coverage.checkable
+        + " papers checked for retraction. " + rx.coverage.unchecked
+        + " have never been checked — an unchecked paper is not a clean paper."),
+      el("div", { class: "row", style: "margin-top:8px" },
+        el("button", { class: "btn sm", onclick: async () => {
+          await api("/api/retractions/sweep", { body: { limit: 50 } });
+          viewToday(T);
+        } }, "Check them"))));
+  }
+
   // 1. What the WORK needs — before anything about the literature. The most
   //    common failure of a research tool is telling you about papers when what
   //    you actually owe is a result you never wrote down.
@@ -1189,8 +1230,14 @@ function panelMatrix(T) {
     const cell = (row, f) => {
       const c = row.cells[f];
       if (!c.reported) {
-        return el("td", {}, el("span", { class: "pill warn",
-          title: "A literal reading found no statement of this" }, "not reported"));
+        // Three shades of empty, and the difference matters: "not reported" is
+        // a finding about the paper and cites as one, the other two are gaps in
+        // our own coverage and must not be read as evidence of absence.
+        const judged = c.state === "not reported";
+        return el("td", {}, el("span", {
+          class: "pill " + (judged ? "warn" : ""),
+          style: judged ? "" : "opacity:.55",
+          title: c.why || "A literal reading found no statement of this" }, c.state));
       }
       return el("td", {}, el("button", {
         class: "btn sm", style: "font-weight:500;text-align:left",
@@ -1207,6 +1254,7 @@ function panelMatrix(T) {
     };
 
     const gapRows = Object.entries(m.gap_summary || {}).filter(([, v]) => !v.startsWith("0/"));
+    const unchecked = (m.unchecked_papers || []).length;
 
     out.replaceChildren(el("div", {},
       gapRows.length ? el("div", { class: "card" },
@@ -1215,7 +1263,11 @@ function panelMatrix(T) {
           el("div", { class: "s" }, el("b", {}, f.replace(/_/g, " ")), " — ", v))),
         el("div", { class: "note" },
           "Read the columns downwards. A field most papers omit is a finding about "
-          + "the field, not a hole in the table.")) : null,
+          + "the field, not a hole in the table. Denominators count only papers "
+          + "whose methods were actually read."),
+        unchecked ? el("div", { class: "note" },
+          unchecked + " paper(s) in this table have not been extracted, so their "
+          + "empty cells say nothing about the paper.") : null) : null,
       el("div", { class: "card", style: "overflow-x:auto" },
         el("table", {},
           el("tr", {}, el("th", {}, "paper"),
