@@ -88,6 +88,37 @@ than document it, use OS-level controls: Little Snitch or LuLu on macOS,
 an explicit egress policy. Enforcement matters most if you ever grant shell
 access — an allowlist the agent can edit is not an allowlist.
 
+## The dashboard
+
+`neobrain web` binds **127.0.0.1** and refuses any other interface unless you
+pass `--allow-remote`. That refusal is deliberate: the database holds your
+unpublished notes, your reading history, and protocol detail from papers you
+may not have published against yet. It should not become reachable from a
+shared network because a default was convenient.
+
+If you need it from another machine, tunnel rather than expose:
+
+```bash
+ssh -L 8787:127.0.0.1:8787 you@your-machine
+# then open http://127.0.0.1:8787 locally
+```
+
+If you genuinely must bind an interface — a lab workstation on a trusted VLAN —
+set a token as well, and understand that this is HTTP without TLS:
+
+```bash
+neobrain web --host 0.0.0.0 --allow-remote --token "$(openssl rand -hex 24)"
+```
+
+The dashboard can approve proposals. That is intentional and is *your* review
+step, not the agent's — the agent has no tool that reaches it. But it means
+anyone who can reach the port can approve memory edits, which is another reason
+the default bind is loopback.
+
+The page makes zero external requests: no CDN, no fonts, no analytics, and a
+Content-Security-Policy header that forbids them, so a future edit cannot
+silently start leaking your queries to a third party.
+
 ## Stage 5 — git everything
 
 ```bash

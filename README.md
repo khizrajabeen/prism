@@ -8,22 +8,23 @@ remembers your project across sessions, teaches you the field, and refuses to
 tell you anything it cannot source.
 
 ```
-                    ┌──────────────────────────────────────┐
-   Europe PMC ─┐    │  sweep  →  score  →  store  →  digest │
-   bioRxiv     ├───▶│                                      │
-   medRxiv     │    │            brain.db                  │
-   CT.gov      ┘    │  papers · full text · trials ·       │
-                    │  chunks · beliefs · sessions · cards │
-   your PDFs ──────▶└──────────────┬───────────────────────┘
-                                   │
-                    hybrid retrieval (BM25 + vectors, RRF)
-                                   │
-                    ┌──────────────▼───────────────────────┐
-                    │   CLI          MCP server            │
-                    │   neobrain …   any agent client      │
-                    └──────────────┬───────────────────────┘
-                                   │
-                         your model, grounded and cited
+                    ┌────────────────────────────────────────────┐
+   Europe PMC ─┐    │ sweep → score → grade → graph → contradict  │
+   bioRxiv     ├───▶│                                            │
+   medRxiv     │    │                  brain.db                  │
+   CT.gov      ┘    │  papers · full text · trials · entities    │
+                    │  journal(append-only) · beliefs(versioned) │
+   your PDFs ──────▶│  rules · conflicts · cards · provenance    │
+                    └─────────────────────┬──────────────────────┘
+                                          │
+              hybrid retrieval:  BM25 + vectors + entity graph → RRF
+                                          │
+                    ┌─────────────────────▼──────────────────────┐
+                    │  CLI        dashboard        MCP server    │
+                    │  neobrain   localhost:8787   35 tools      │
+                    └─────────────────────┬──────────────────────┘
+                                          │
+                            your model, grounded and cited
 ```
 
 ---
@@ -64,12 +65,84 @@ guesses.
 | **An approval gate** | The agent proposes curated memory edits; you approve diffs |
 | **A curriculum** | Ten modules from antigen presentation to study design, each with a checkpoint task |
 | **Spaced repetition** | SM-2 cards built from your own reading |
-| **Agent tools** | An MCP server exposing 30 tools to Claude Desktop / Claude Code / any client |
+| **A local dashboard** | Ten views, single-file HTML, stdlib server, binds localhost only |
+| **A model registry** | ~20 biology models with licences, hardware needs, and honest caveats |
+| **Peptide tools** | Mutant windows with WT controls, junctional neoepitopes, HLA validation |
+| **Agent tools** | An MCP server exposing 35 tools to Claude Desktop / Claude Code / any client |
 
 Two dependencies (`requests`, `PyYAML`). Everything else is optional and the
 system degrades gracefully without it.
 
 ---
+
+## The dashboard
+
+```bash
+neobrain web          # → http://127.0.0.1:8787
+```
+
+A single-file HTML app served by the standard library. No framework, no CDN,
+no build step, no new dependency — because a research tool you cannot start in
+three years, when the JS ecosystem has moved on, is not a durable one.
+
+Ten views: overview, hybrid search with evidence packs, an interactive entity
+graph, the journal, beliefs with version history, the review queue with diffs,
+conflicts, the model registry, peptide tools, and spaced repetition.
+
+It binds **127.0.0.1** and refuses any other interface unless you pass
+`--allow-remote`. This database holds your unpublished notes and reading
+history; it should not become reachable from café wifi because a default was
+convenient. For remote access, tunnel it:
+
+```bash
+ssh -L 8787:127.0.0.1:8787 you@your-machine
+```
+
+## The bench: models and peptide tools
+
+**What models exist, and can I run them here?**
+
+```bash
+$ neobrain models --recommend structure
+Task: structure
+  Boltz-2 is the practical open default (MIT, joint affinity, strong on
+  antibody-antigen interfaces which most resemble TCR-pMHC)…
+
+→ Boltz-2  (not installed (python:boltz) — pip install boltz)
+  caveat: Affinity prediction is not calibrated for pMHC; use it for ranking,
+          not absolute values.
+```
+
+`config/models.yaml` catalogues ~20 models — NetMHCpan, MHCflurry, BigMHC,
+PRIME, the TCR-specificity family, HERMES, AlphaFold 3, Boltz-2, Chai-1,
+ESM-2/3, Evo 2, SpliceAI, scGPT, Geneformer — each with its licence, hardware
+needs, **and a caveat**. Availability detection is real: it imports the module
+or looks for the binary, so `--available` tells you what actually runs here.
+
+The caveats are the point. A registry that tells you TCR-specificity models
+exist, without telling you their training data is dominated by a handful of
+viral epitopes and that a negative prediction means nothing, is worse than no
+registry.
+
+**Peptide calculations**, the operations *around* the models where a silent
+off-by-one produces a peptide that does not exist:
+
+```bash
+# every mutant peptide, with its wild-type control
+neobrain peptide windows KRAS_SEQ 12 D --wildtype G
+
+# what did my linkers just create?
+$ neobrain peptide junctions SIINFEKL,ASMTNMELM,GILGFVFTL --linker AAY
+90 junction-spanning peptides across 2 junctions
+→ present in the construct and in no tumor cell. Screen them against the
+  patient's HLA — any that bind are response diverted from real targets.
+
+neobrain peptide hla "HLA-A2"      # → rejected: serological, not four-digit
+```
+
+Positions are 1-based, as variants are written. Passing the expected wild-type
+residue catches transcript/isoform mismatches, which otherwise yield confident
+predictions for peptides that were never in the protein.
 
 ## Daily use
 
@@ -422,6 +495,7 @@ neobrain/
 ├── config/
 │   ├── interests.yaml         what you care about; tune weekly
 │   ├── settings.yaml          system settings
+│   ├── models.yaml            the biology model registry
 │   └── curriculum.yaml        10-module learning path with checkpoints
 ├── memory/CORE.md             loaded in full every session
 ├── knowledge/                 13 curated domain notes, retrieved on demand
@@ -433,6 +507,9 @@ neobrain/
 │   ├── journal.py             append-only memory (immutable)
 │   ├── graph.py               entity graph + personalized PageRank
 │   ├── evidence.py            evidence tiers + contradiction detection
+│   ├── models.py              biology model registry + availability detection
+│   ├── peptides.py            sequence and construct calculations
+│   ├── web/                   dashboard: stdlib server + single-file app
 │   ├── memory.py  tutor.py  db.py  cli.py  mcp_server.py
 │   └── sources/  europepmc · clinicaltrials · preprints · fulltext · local
 ├── docs/  DEPLOYMENT.md  SECURITY.md  WORKFLOWS.md

@@ -669,6 +669,117 @@ def cmd_backup(args) -> int:
     return 0
 
 
+def cmd_web(args) -> int:
+    from .web import serve
+
+    serve(host=args.host, port=args.port, token=args.token,
+          open_browser=not args.no_browser, allow_remote=args.allow_remote)
+    return 0
+
+
+def cmd_models(args) -> int:
+    from . import models as models_mod
+
+    if args.env:
+        env = models_mod.environment()
+        print(_c("This machine", BOLD))
+        print(f"  GPU        {'yes, ' + str(env['vram_gb']) + ' GB' if env['gpu'] else 'no'}")
+        print(f"  installed  {', '.join(env['installed']) or 'none of the registered models'}")
+        print(f"  {env['note']}")
+        return 0
+
+    if args.recommend:
+        rec = models_mod.recommend(args.recommend)
+        if "error" in rec:
+            print(rec["error"])
+            print("known tasks: " + ", ".join(rec["known_tasks"]))
+            return 1
+        print(_c(f"Task: {rec['task']}", BOLD))
+        if rec["guidance"]:
+            print(textwrap.fill(rec["guidance"], width=92, initial_indent="  ",
+                                subsequent_indent="  "))
+        m = rec["recommended"]
+        print(_c(f"\n→ {m['name']}", BOLD) + f"  ({m['availability']})")
+        print(textwrap.fill(m["summary"], width=92, initial_indent="    ", subsequent_indent="    "))
+        if m["caveat"]:
+            print(_c("  caveat:", BOLD))
+            print(textwrap.fill(m["caveat"], width=92, initial_indent="    ", subsequent_indent="    "))
+        if rec["alternatives"]:
+            print(f"\n  alternatives: {', '.join(a['name'] for a in rec['alternatives'])}")
+        return 0
+
+    found = (models_mod.for_task(args.task) if args.task
+             else models_mod.find(args.query or ""))
+    if args.available:
+        found = [m for m in found if m.available]
+    if not found:
+        print("Nothing matches. Tasks: " + ", ".join(models_mod.tasks()))
+        return 1
+    for m in found:
+        print(models_mod.format_model(m, verbose=args.verbose or bool(args.query)))
+        print()
+    if args.task:
+        g = models_mod.guidance(args.task)
+        if g:
+            print(_c("guidance", BOLD))
+            print(textwrap.fill(g, width=92, initial_indent="  ", subsequent_indent="  "))
+    return 0
+
+
+def cmd_peptide(args) -> int:
+    from . import peptides as pep
+
+    try:
+        if args.action == "windows":
+            protein = (Path(args.protein).read_text(encoding="utf-8")
+                       if Path(args.protein).exists() else args.protein)
+            lengths = tuple(int(x) for x in args.lengths.split(","))
+            windows = pep.mutant_windows(protein, args.position, args.mutant,
+                                         lengths=lengths, wildtype_aa=args.wildtype)
+            print(f"{len(windows)} peptides containing the mutation\n")
+            print(f"{'mutant':<28} {'len':>3} {'pos':>4}  {'wild-type':<28} type")
+            for w in windows:
+                kind = "anchor" if w.is_anchor else "TCR-facing"
+                print(f"{w.peptide:<28} {w.length:>3} {'P' + str(w.mutation_position):>4}  "
+                      f"{w.wildtype:<28} {kind}")
+
+        elif args.action == "junctions":
+            epitopes = [e.strip() for e in args.epitopes.split(",") if e.strip()]
+            r = pep.analyse_junctions(epitopes, linker=args.linker)
+            print(_c("construct", BOLD))
+            print(f"  {r['construct']}  ({r['length']} aa)")
+            print(f"  linker {r['linker']} — {r['linker_note']}\n")
+            for i, j in enumerate(r["junctions"], 1):
+                print(_c(f"junction {i}: {j['left']} | {j['linker']} | {j['right']}", BOLD))
+                print(f"  {j['n_novel']} novel peptides")
+                print(textwrap.fill("  ".join(j["novel_peptides"][:16]), width=92,
+                                    initial_indent="    ", subsequent_indent="    "))
+            print(_c(f"\n{r['total_novel_peptides']} total", BOLD))
+            print(textwrap.fill(r["verdict"], width=92, initial_indent="  ", subsequent_indent="  "))
+
+        elif args.action == "hla":
+            r = pep.normalize_hla(args.allele)
+            mark = "✓" if r["valid"] else "✗"
+            print(f"{mark} {r.get('normalized') or r['input']}")
+            if r.get("mhc_class"):
+                print(f"  class {r['mhc_class']} · {r.get('resolution', '')}")
+            if r.get("note"):
+                print(textwrap.fill(r["note"], width=92, initial_indent="  ", subsequent_indent="  "))
+
+        elif args.action == "info":
+            r = pep.summarize_peptide(args.peptide)
+            print(_c(r["peptide"], BOLD))
+            print(f"  length {r['length']} · {r['mhc_fit']}")
+            print(f"  MW {r['molecular_weight_da']} Da · GRAVY {r['gravy']}")
+            print(f"  anchors: P2={r['anchor_residues']['P2']} C-term={r['anchor_residues']['C_term']}")
+            if r["synthesis_warning"]:
+                print(_c(f"  synthesis: {r['synthesis_warning']}", BOLD))
+    except pep.SequenceError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_progress(args) -> int:
     con = db.connect()
     print(tutor.progress(con))
@@ -854,6 +965,41 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--topic"); c.add_argument("--source")
     cs.add_parser("stats")
     p.set_defaults(func=cmd_card)
+
+    p = sub.add_parser("web", help="run the local dashboard")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--token", help="require this token (use with --allow-remote)")
+    p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--allow-remote", action="store_true",
+                   help="permit binding a non-local interface (see docs/SECURITY.md)")
+    p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser("models", help="biology model registry: what exists, what runs here")
+    p.add_argument("query", nargs="?", help="search by name, task, or text")
+    p.add_argument("--task", help="filter to one task")
+    p.add_argument("--recommend", metavar="TASK", help="recommend a model for a task")
+    p.add_argument("--available", action="store_true", help="only what is installed here")
+    p.add_argument("--env", action="store_true", help="what this machine can run")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=cmd_models)
+
+    p = sub.add_parser("peptide", help="peptide and construct calculations")
+    ps = p.add_subparsers(dest="action", required=True)
+    a = ps.add_parser("windows", help="mutant peptide windows, with WT controls")
+    a.add_argument("protein", help="sequence, or a path to a file containing one")
+    a.add_argument("position", type=int, help="1-based residue position")
+    a.add_argument("mutant", help="mutant residue, e.g. D")
+    a.add_argument("--wildtype", help="expected WT residue — catches isoform mismatch")
+    a.add_argument("--lengths", default="8,9,10,11")
+    a = ps.add_parser("junctions", help="junctional neoepitopes in a construct")
+    a.add_argument("epitopes", help="comma-separated, in construct order")
+    a.add_argument("--linker", default="AAY")
+    a = ps.add_parser("hla", help="validate and normalize an HLA allele")
+    a.add_argument("allele")
+    a = ps.add_parser("info", help="everything computable about one peptide")
+    a.add_argument("peptide")
+    p.set_defaults(func=cmd_peptide)
 
     p = sub.add_parser("remember", help="write to permanent append-only memory")
     p.add_argument("text")

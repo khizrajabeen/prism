@@ -534,6 +534,91 @@ def _server():
         finally:
             con.close()
 
+    # ------------------------------------------------------------ the bench
+    @mcp.tool()
+    def list_models(task: str = "", query: str = "") -> str:
+        """The biology model registry: what exists, and what runs on this machine.
+
+        Tasks: mhc_binding, immunogenicity, tcr_specificity, structure,
+        protein_embedding, variant_effect, genome, single_cell, text.
+
+        Every entry carries a caveat. Relay it — recommending a TCR specificity
+        model without saying its training data is dominated by a few viral
+        epitopes is how someone ends up trusting a negative prediction.
+        """
+        from . import models as models_mod
+
+        found = models_mod.for_task(task) if task else models_mod.find(query)
+        return json.dumps({
+            "models": [m.to_dict() for m in found],
+            "guidance": models_mod.guidance(task) if task else models_mod.guidance(),
+            "environment": models_mod.environment(),
+        }, indent=2)
+
+    @mcp.tool()
+    def recommend_model(task: str) -> str:
+        """Recommend a model for a task, preferring what is installed and openly
+        licensed. Always relay the caveat and the licence with the name."""
+        from . import models as models_mod
+
+        return json.dumps(models_mod.recommend(task), indent=2)
+
+    @mcp.tool()
+    def peptide_windows(protein: str, position: int, mutant_aa: str,
+                        wildtype_aa: str = "", lengths: str = "8,9,10,11") -> str:
+        """Generate every mutant peptide containing a substitution, with its
+        wild-type control.
+
+        `position` is 1-based, as variants are written (p.G12D). Pass
+        `wildtype_aa` whenever you know it — a mismatch means the sequence and
+        the variant annotation disagree, usually a transcript/isoform problem,
+        and catching it here prevents predictions for peptides that do not exist.
+        """
+        from . import peptides as pep
+
+        try:
+            windows = pep.mutant_windows(
+                protein, int(position), mutant_aa,
+                lengths=tuple(int(x) for x in lengths.split(",")),
+                wildtype_aa=wildtype_aa or None,
+            )
+            return json.dumps({"count": len(windows),
+                               "windows": [w.to_dict() for w in windows]}, indent=2)
+        except pep.SequenceError as e:
+            return f"error: {e}"
+
+    @mcp.tool()
+    def analyse_construct(epitopes: str, linker: str = "AAY") -> str:
+        """Find the junctional neoepitopes in a multi-epitope construct.
+
+        `epitopes` is a comma-separated list in construct order. Returns every
+        junction-spanning peptide — sequences present in the vaccine and in no
+        tumor cell, which divert response from real targets. Screen them against
+        the patient's HLA; any that bind are wasted immune response.
+        """
+        from . import peptides as pep
+
+        try:
+            return json.dumps(pep.analyse_junctions(
+                [e.strip() for e in epitopes.split(",") if e.strip()], linker=linker
+            ), indent=2)
+        except pep.SequenceError as e:
+            return f"error: {e}"
+
+    @mcp.tool()
+    def check_hla(allele: str) -> str:
+        """Validate and normalize an HLA allele name.
+
+        Catches serological-level names (HLA-A2) that are not sufficient for
+        prediction, legacy formats (A*0201), and null alleles.
+        """
+        from . import peptides as pep
+
+        try:
+            return json.dumps(pep.normalize_hla(allele), indent=2)
+        except pep.SequenceError as e:
+            return f"error: {e}"
+
     @mcp.tool()
     def corpus_status() -> str:
         """Corpus and memory statistics — use to check whether the brain is stale."""

@@ -1,0 +1,412 @@
+# ---------------------------------------------------------------------------
+# Biology model registry.
+#
+# What exists, what it is actually good for, and — the part most model lists
+# omit — when NOT to use it. Every entry carries a `caveat`, because in this
+# field the difference between a useful prediction and a misleading one is
+# almost always a scope condition someone ignored.
+#
+#   neobrain models                     list everything, with local availability
+#   neobrain models --task immunogenicity
+#   neobrain models --available         only what is installed on this machine
+#   neobrain models ESM-3               detail on one model
+#
+# `check` is how NeoBrain detects whether you can actually run it locally:
+#   python:<module>   importable module
+#   cli:<binary>      executable on PATH
+#   web               hosted only — no local inference
+#
+# Verify versions and licences before relying on any of this. Model licences
+# in this space change, and several of the most useful weights are
+# research-use-only in ways that matter if your work is industry-funded.
+# ---------------------------------------------------------------------------
+
+version: 2026.08
+
+tasks:
+  - mhc_binding
+  - immunogenicity
+  - tcr_specificity
+  - structure
+  - protein_embedding
+  - variant_effect
+  - genome
+  - single_cell
+  - expression
+  - text
+
+models:
+
+  # ------------------------------------------------ MHC binding / presentation
+  - id: netmhcpan
+    name: NetMHCpan
+    task: mhc_binding
+    modality: peptide + HLA class I
+    summary: >
+      The long-standing pan-allele reference for class I binding and eluted-ligand
+      presentation prediction. Still the baseline every new method must beat, and
+      frequently does not.
+    license: academic use, free with registration; not redistributable
+    weights: closed (binary download)
+    check: cli:netMHCpan
+    hardware: CPU
+    use_when: You need a defensible, widely-accepted class I prediction.
+    caveat: >
+      Predicts binding/presentation, NOT immunogenicity. Percentile rank is
+      comparable across alleles; raw nM affinity is not. Performance is much
+      worse on rare alleles than the headline numbers suggest.
+    see_also: [mhcflurry, netmhciipan]
+
+  - id: netmhciipan
+    name: NetMHCIIpan
+    task: mhc_binding
+    modality: peptide + HLA class II
+    summary: Class II counterpart to NetMHCpan.
+    license: academic use, free with registration
+    weights: closed
+    check: cli:netMHCIIpan
+    hardware: CPU
+    use_when: Class II candidate generation — there is no better general option.
+    caveat: >
+      Materially weaker than class I prediction. The class II groove is open-ended,
+      so the 9-mer binding core register is ambiguous, and errors in core
+      assignment propagate into everything downstream. Carry the uncertainty
+      explicitly rather than treating class I and class II scores as equivalent.
+
+  - id: mhcflurry
+    name: MHCflurry 2.x
+    task: mhc_binding
+    modality: peptide + HLA class I
+    summary: >
+      Open-source pan-allele class I predictor with separate binding-affinity,
+      antigen-processing and presentation models.
+    license: Apache-2.0
+    weights: open
+    check: python:mhcflurry
+    hardware: CPU (GPU optional)
+    install: pip install mhcflurry && mhcflurry-downloads fetch
+    use_when: >
+      You want a fully open, scriptable, reproducible pipeline, or you need to
+      run predictions inside a container without a licence step.
+    caveat: Same binding-vs-immunogenicity gap as NetMHCpan. Check allele coverage.
+    see_also: [netmhcpan]
+
+  - id: mixmhcpred
+    name: MixMHCpred / MixMHC2pred
+    task: mhc_binding
+    modality: peptide + HLA
+    summary: Motif-deconvolution-based predictors built from immunopeptidomics data.
+    license: academic
+    weights: open binaries
+    check: cli:MixMHCpred
+    hardware: CPU
+    use_when: Cross-checking NetMHCpan on class I, or class II motif work.
+    caveat: Motif-driven; behaves differently from pan-allele neural predictors on rare alleles.
+
+  - id: bigmhc
+    name: BigMHC
+    task: immunogenicity
+    modality: peptide + HLA class I
+    summary: >
+      Deep-learning model trained with transfer learning from presentation to
+      immunogenicity — one of the few that targets immunogenicity directly rather
+      than using binding as a proxy.
+    license: research use
+    weights: open
+    check: python:bigmhc
+    hardware: GPU recommended
+    use_when: Ranking candidates beyond binding affinity.
+    caveat: >
+      Immunogenicity training data is small, HLA-A*02:01-heavy, and its negatives
+      are largely unverified. Treat any immunogenicity model's top-N as a
+      hypothesis ordering, not a probability.
+
+  - id: prime
+    name: PRIME
+    task: immunogenicity
+    modality: peptide + HLA class I
+    summary: Combines predicted presentation with TCR-recognition propensity features.
+    license: academic
+    weights: open
+    check: cli:PRIME
+    hardware: CPU
+    use_when: Adding a recognition-aware term to a ranking built on binding.
+    caveat: Trained on a limited set of validated epitopes; allele coverage is uneven.
+
+  # ---------------------------------------------------------- TCR specificity
+  - id: tcr_specificity_family
+    name: TCR–pMHC specificity models (TULIP, TCRBagger, ERGO-II, NetTCR, epiTCR)
+    task: tcr_specificity
+    modality: TCR CDR3 + peptide (+ HLA)
+    summary: >
+      A fast-moving family predicting whether a given TCR recognizes a given
+      peptide-MHC. 2025-26 work moved toward weakly-supervised and multi-instance
+      learning (TCRBagger) to cope with the scarcity of labelled pairs.
+    license: mostly permissive, per-model
+    weights: open
+    check: python:tcrbagger
+    hardware: GPU recommended
+    use_when: >
+      You have paired TCR sequences and want to prioritise which clonotypes to
+      reconstruct and test.
+    caveat: >
+      The single least reliable category in this registry. Training data
+      (VDJdb, McPAS, IEDB) is dominated by a handful of viral epitopes —
+      typically far more observations for a few immunodominant specificities
+      than for the entire neoantigen space. Generalisation to unseen epitopes is
+      poor and is the field's acknowledged open problem. Never treat a negative
+      as evidence of non-recognition.
+
+  - id: hermes
+    name: HERMES
+    task: tcr_specificity
+    modality: structure (SE(3)-equivariant)
+    summary: >
+      Structure-based equivariant network trained on the general protein universe
+      that predicts TCR–pMHC binding without direct training on TCR–pMHC data,
+      and has been used for de novo immunogenic peptide design.
+    license: research use
+    weights: open
+    check: python:hermes
+    hardware: GPU
+    use_when: >
+      Structure-aware reasoning about which residues face the TCR, and peptide
+      design when you have a structure or a credible model of one.
+    caveat: >
+      Requires a structure. Reported design success rates come from specific
+      therapeutically-relevant systems and should not be extrapolated to
+      arbitrary neoantigen-HLA pairs.
+
+  # ------------------------------------------------------------- structure
+  - id: alphafold3
+    name: AlphaFold 3
+    task: structure
+    modality: protein / complexes / nucleic acids / ligands
+    summary: Broad-scope complex structure prediction; the reference point for the field.
+    license: >
+      Research-use-only custom terms; weights must be requested from Google, are
+      not redistributable, and outputs may not be used to train competing models.
+    weights: restricted
+    check: web
+    hardware: GPU (if granted access)
+    use_when: A high-value complex where structure genuinely changes the decision.
+    caveat: >
+      The licence is a real constraint for industry-funded or commercial work —
+      check before building a pipeline around it. Confidence metrics (pLDDT/PAE)
+      are essential; a confidently-wrong pMHC model is worse than none.
+    see_also: [boltz2, chai1, esmfold]
+
+  - id: boltz2
+    name: Boltz-2
+    task: structure
+    modality: protein complexes + binding affinity
+    summary: >
+      Open structure-and-affinity model reported to outperform AlphaFold3 on
+      antibody-antigen interfaces — the closest analogue to the pMHC/TCR
+      interface problem.
+    license: MIT
+    weights: open
+    check: python:boltz
+    hardware: GPU (24GB+ comfortable)
+    install: pip install boltz
+    use_when: >
+      The default open choice for complex structure work here: permissive
+      licence, joint affinity prediction, strong on the interface class most
+      like TCR-pMHC.
+    caveat: Affinity prediction is not calibrated for pMHC; use it for ranking, not absolute values.
+
+  - id: chai1
+    name: Chai-1
+    task: structure
+    modality: multimodal biomolecular complexes
+    summary: Open multimodal structure prediction, competitive with AF3 on many targets.
+    license: permissive for research; check commercial terms
+    weights: open
+    check: python:chai_lab
+    hardware: GPU
+    use_when: A second opinion on a complex structure, or when AF3 access is unavailable.
+    caveat: As with all of these — check PAE at the interface, not just global confidence.
+
+  - id: esmfold
+    name: ESMFold
+    task: structure
+    modality: single-chain protein
+    summary: Fast single-sequence folding, no MSA required.
+    license: MIT
+    weights: open
+    check: python:esm
+    hardware: GPU
+    use_when: Bulk single-chain structures, or when you have no MSA.
+    caveat: Single chains only — not complexes, so not directly a pMHC/TCR tool.
+
+  # -------------------------------------------------------- protein language
+  - id: esm3
+    name: ESM-3
+    task: protein_embedding
+    modality: sequence + structure + function
+    summary: >
+      Multimodal protein language model reasoning jointly over sequence,
+      structure and function, with generative capability.
+    license: tiered; smaller open weights, larger models restricted
+    weights: partially open
+    check: python:esm
+    hardware: GPU
+    use_when: >
+      Embeddings for downstream classifiers, variant-effect intuition, or
+      protein design work adjacent to your neoantigen pipeline.
+    caveat: >
+      Embeddings are not immunology-aware. A PLM has no concept of HLA
+      restriction, and using its similarity as a proxy for immunogenicity is a
+      recurring and inadvisable shortcut.
+    see_also: [esm2, boltz2]
+
+  - id: esm2
+    name: ESM-2
+    task: protein_embedding
+    modality: protein sequence
+    summary: The workhorse open protein language model; several sizes, MIT-licensed.
+    license: MIT
+    weights: open
+    check: python:esm
+    hardware: CPU for small variants, GPU for 650M+
+    install: pip install fair-esm
+    use_when: >
+      Practical default for protein embeddings — small variants run on a laptop,
+      the licence is clean, and it is well understood.
+    caveat: Same non-immunological-prior caveat as ESM-3.
+
+  # --------------------------------------------------------------- genome
+  - id: evo2
+    name: Evo 2
+    task: genome
+    modality: DNA, long context
+    summary: >
+      Genome-scale language model with very long context, spanning coding and
+      non-coding sequence.
+    license: open (check version terms)
+    weights: open
+    check: python:evo2
+    hardware: GPU, substantial
+    use_when: >
+      Non-coding and regulatory variant reasoning — the class of neoantigen
+      source most pipelines ignore entirely.
+    caveat: Compute-heavy; unlikely to be the bottleneck-solver for a standard SNV pipeline.
+
+  - id: nucleotide_transformer
+    name: Nucleotide Transformer
+    task: genome
+    modality: DNA
+    summary: Genomic foundation model family, several sizes.
+    license: open
+    weights: open
+    check: python:transformers
+    hardware: GPU
+    use_when: Variant-effect features on genomic context.
+    caveat: General genomic pretraining; not tumor- or immunology-specific.
+
+  - id: spliceai
+    name: SpliceAI
+    task: variant_effect
+    modality: DNA
+    summary: Splice-altering variant prediction.
+    license: open
+    weights: open
+    check: python:spliceai
+    hardware: CPU/GPU
+    use_when: >
+      Finding splice-derived neoantigens — a genuinely under-exploited candidate
+      class, especially in tumors with SF3B1/U2AF1 mutations.
+    caveat: Predicts splicing change, not the resulting peptide. You still need to translate the novel junction.
+
+  # ----------------------------------------------------------- single cell
+  - id: scgpt
+    name: scGPT
+    task: single_cell
+    modality: scRNA-seq
+    summary: >
+      Single-cell foundation model; among the top performers in 2026
+      benchmarks on usability and accuracy.
+    license: open, research use
+    weights: open
+    check: python:scgpt
+    hardware: GPU
+    use_when: Cell-type annotation and integration on large heterogeneous datasets.
+    caveat: >
+      Benchmarks find single-cell foundation models beat classical baselines
+      mainly in zero-shot and large-scale settings, and that they struggle to
+      capture perturbation-specific effects beyond population means. For a
+      standard annotated TIL dataset, scanpy/Seurat with a good reference is
+      often as good and far cheaper. Do not assume a foundation model is an
+      upgrade — benchmark it against the classical pipeline on your data.
+    see_also: [geneformer]
+
+  - id: geneformer
+    name: Geneformer
+    task: single_cell
+    modality: scRNA-seq
+    summary: Rank-value-encoded transformer for single-cell transcriptomics; in-silico perturbation.
+    license: open, research use
+    weights: open
+    check: python:geneformer
+    hardware: GPU
+    use_when: In-silico perturbation hypotheses and network-level questions.
+    caveat: Same benchmark caution as scGPT. In-silico perturbation is hypothesis generation.
+
+  # ------------------------------------------------------------------ text
+  - id: biomedical_llm
+    name: Biomedical / general LLMs for literature reasoning
+    task: text
+    modality: text
+    summary: >
+      The reasoning layer over your corpus. Local open-weight models are credible
+      for triage and tagging; frontier models remain ahead on long multi-step
+      tool loops and dense immunology reasoning.
+    license: varies
+    weights: varies
+    check: cli:ollama
+    hardware: 6GB VRAM for a usable 7-8B at 4-bit; 24GB+ before local reasoning is trustworthy for real work
+    use_when: >
+      Local model for high-volume cheap work (triaging 400 abstracts a night,
+      tagging, dedup); frontier model for synthesis, code, and anything going
+      into a thesis.
+    caveat: >
+      Any LLM will produce a fluent, plausible, wrong citation. This is exactly
+      what NeoBrain's sourcing rule and belief store exist to contain — see
+      AGENT.md.
+
+# ---------------------------------------------------------------------------
+# Task-level guidance. What to reach for, in order, and the honest ceiling.
+# ---------------------------------------------------------------------------
+guidance:
+  mhc_binding: >
+    Solved well enough for class I that the predictor is rarely your limiting
+    factor: use NetMHCpan or MHCflurry, prefer eluted-ligand/presentation output
+    over pure affinity, and use percentile rank. Class II is genuinely weaker —
+    budget for it. Your real losses happen downstream, in ranking.
+
+  immunogenicity: >
+    Unsolved. Every model here adds real but modest signal over
+    binding + expression + clonality. Use them to order candidates, never to
+    assign a probability of response, and read the TESLA benchmark before
+    believing any tool's self-reported numbers.
+
+  tcr_specificity: >
+    The weakest category. Training data is dominated by a few viral epitopes and
+    generalisation to unseen epitopes is poor. Useful for prioritising which
+    clonotypes to reconstruct; not useful as evidence of non-recognition.
+
+  structure: >
+    Boltz-2 is the practical open default (MIT, joint affinity, strong on
+    antibody-antigen interfaces which most resemble TCR-pMHC). AlphaFold 3 is
+    stronger in scope but licence-restricted. Always read interface PAE, not
+    just global confidence.
+
+  single_cell: >
+    Benchmark the foundation model against your classical pipeline before
+    adopting it. The 2026 evaluations show advantages concentrated in zero-shot
+    and large-scale heterogeneous settings, not universally.
+
+  variant_effect: >
+    SpliceAI for splice-derived candidates is the highest-value under-used tool
+    in a standard neoantigen pipeline, because splice neoantigens are a real
+    candidate class that SNV-only pipelines never see.

@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeoBrain</title>
+<!-- Inline so the page makes zero external requests, favicon included. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%230f766e'/><circle cx='11' cy='13' r='2.6' fill='%23fff'/><circle cx='21' cy='11' r='2.2' fill='%23fff'/><circle cx='19' cy='22' r='2.4' fill='%23fff'/><path d='M11 13L21 11M21 11L19 22M19 22L11 13' stroke='%23fff' stroke-width='1.4' fill='none' opacity='.75'/></svg>">
+<style>
+/* ---------------------------------------------------------------- tokens */
+:root {
+  --bg: #f7f8fa;  --surface: #ffffff;  --surface-2: #f1f3f6;
+  --border: #e2e6ec; --border-strong: #cbd2dc;
+  --text: #16191d;  --muted: #5d6773;  --faint: #8b95a2;
+  --accent: #0f766e; --accent-soft: #ccfbf1; --accent-text: #0b5b55;
+  --warn: #b45309;  --warn-soft: #fef3c7;
+  --danger: #b42318; --danger-soft: #fee4e2;
+  --ok: #067647;    --ok-soft: #dcfce7;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116; --surface: #161b22; --surface-2: #1c222b;
+    --border: #272e39; --border-strong: #39424f;
+    --text: #e6edf3; --muted: #9aa6b4; --faint: #6e7a89;
+    --accent: #2dd4bf; --accent-soft: #10322f; --accent-text: #5eead4;
+    --warn: #fbbf24; --warn-soft: #3a2c07;
+    --danger: #fca5a5; --danger-soft: #3d1513;
+    --ok: #4ade80; --ok-soft: #10301d;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent-text); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, .mono { font-family: var(--mono); font-size: 13px; }
+
+/* ---------------------------------------------------------------- layout */
+.app { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
+nav {
+  background: var(--surface); border-right: 1px solid var(--border);
+  padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.brand { display: flex; align-items: baseline; gap: 8px; padding: 0 8px 16px; }
+.brand b { font-size: 17px; letter-spacing: -.02em; }
+.brand span { font-size: 11px; color: var(--faint); }
+nav button {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--muted); font: inherit; font-size: 14px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 1px;
+}
+nav button:hover { background: var(--surface-2); color: var(--text); }
+nav button.on { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+nav button .badge {
+  margin-left: auto; background: var(--danger-soft); color: var(--danger);
+  font-size: 11px; padding: 1px 6px; border-radius: 10px; font-weight: 600;
+}
+nav .group { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--faint); padding: 16px 10px 6px; font-weight: 600; }
+
+main { padding: 26px 30px 60px; max-width: 1180px; overflow-x: hidden; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -.02em; }
+h2 { font-size: 16px; margin: 26px 0 10px; letter-spacing: -.01em; }
+.sub { color: var(--muted); font-size: 13.5px; margin: 0 0 20px; max-width: 70ch; }
+
+/* --------------------------------------------------------------- widgets */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+  margin-bottom: 14px;
+}
+.grid { display: grid; gap: 12px; }
+.g4 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.stat { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; }
+.stat .n { font-size: 26px; font-weight: 650; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.stat .h { font-size: 11.5px; color: var(--faint); margin-top: 6px; }
+
+input, select, textarea, button.btn {
+  font: inherit; padding: 8px 11px; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--surface); color: var(--text); width: 100%;
+}
+textarea { resize: vertical; min-height: 76px; font-family: var(--sans); }
+input:focus, textarea:focus, select:focus {
+  outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent;
+}
+button.btn { width: auto; cursor: pointer; font-weight: 550; }
+button.btn:hover { background: var(--surface-2); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { button.primary { color: #08211f; } }
+button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+button.sm { padding: 5px 10px; font-size: 13px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row > input { flex: 1; min-width: 200px; }
+
+.pill { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11.5px;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+  white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.pill.bad { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.pill.acc { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+
+.hit { border-bottom: 1px solid var(--border); padding: 14px 0; }
+.hit:last-child { border-bottom: 0; }
+.hit .t { font-weight: 600; margin-bottom: 3px; }
+.hit .m { font-size: 12px; color: var(--faint); margin-bottom: 7px; }
+.hit .s { font-size: 13.5px; color: var(--muted); }
+mark { background: var(--accent-soft); color: var(--accent-text); padding: 0 2px;
+  border-radius: 3px; }
+
+pre.md { white-space: pre-wrap; word-wrap: break-word; font-size: 13px;
+  line-height: 1.6; margin: 0; font-family: var(--mono); }
+.scroll { max-height: 62vh; overflow-y: auto; }
+.diff { font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap;
+  background: var(--surface-2); padding: 12px; border-radius: 8px;
+  border: 1px solid var(--border); overflow-x: auto; }
+.diff .add { color: var(--ok); }
+.diff .del { color: var(--danger); }
+.empty { color: var(--faint); font-size: 14px; padding: 22px 0; text-align: center; }
+.note { font-size: 12.5px; color: var(--muted); background: var(--surface-2);
+  border-left: 3px solid var(--border-strong); padding: 9px 12px;
+  border-radius: 0 6px 6px 0; margin: 10px 0; }
+.note.warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--faint); border-bottom: 1px solid var(--border); padding: 7px 8px; font-weight: 600; }
+td { padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+canvas { width: 100%; height: 460px; display: block; border-radius: 8px;
+  background: var(--surface-2); cursor: grab; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted);
+  margin-top: 10px; }
+.legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+  margin-right: 4px; vertical-align: middle; }
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border-strong);
+  border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+@media (max-width: 780px) {
+  .app { grid-template-columns: 1fr; }
+  nav { position: static; height: auto; display: flex; flex-wrap: wrap; gap: 4px; }
+  nav button { width: auto; }
+  nav .group, .brand { width: 100%; }
+  main { padding: 18px 16px 50px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="brand"><b>NeoBrain</b><span id="ver">local</span></div>
+    <div class="group">Work</div>
+    <button data-v="overview" class="on">Overview</button>
+    <button data-v="search">Search</button>
+    <button data-v="graph">Entity graph</button>
+    <button data-v="digest">Digest</button>
+    <div class="group">Memory</div>
+    <button data-v="journal">Journal</button>
+    <button data-v="beliefs">Beliefs</button>
+    <button data-v="review">Review <span class="badge" id="b-rev" hidden>0</span></button>
+    <button data-v="conflicts">Conflicts <span class="badge" id="b-con" hidden>0</span></button>
+    <div class="group">Bench</div>
+    <button data-v="models">Models</button>
+    <button data-v="tools">Peptide tools</button>
+    <button data-v="learn">Learn</button>
+  </nav>
+  <main id="main"><div class="empty"><span class="spin"></span> loading…</div></main>
+</div>
+
+<script>
+"use strict";
+const TOKEN = new URLSearchParams(location.search).get("token");
+const $ = (s, r = document) => r.querySelector(s);
+const el = (t, a = {}, ...kids) => {
+  const n = document.createElement(t);
+  for (const [k, v] of Object.entries(a)) {
+    if (k === "class") n.className = v;
+    else if (k === "html") n.innerHTML = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined && v !== false) n.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return n;
+};
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = n => (n ?? 0).toLocaleString();
+
+async function api(path, opts = {}) {
+  const url = new URL(path, location.origin);
+  if (TOKEN) url.searchParams.set("token", TOKEN);
+  for (const [k, v] of Object.entries(opts.params || {}))
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
+  const r = await fetch(url, {
+    method: opts.body ? "POST" : "GET",
+    headers: opts.body ? { "Content-Type": "application/json" } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  return r.json();
+}
+
+const main = $("#main");
+const busy = (msg = "loading") => { main.replaceChildren(
+  el("div", { class: "empty" }, el("span", { class: "spin" }), " " + msg + "…")); };
+const setMain = (...nodes) => main.replaceChildren(...nodes.flat());
+const head = (title, sub) => [el("h1", {}, title), sub && el("p", { class: "sub" }, sub)];
+
+// --------------------------------------------------------------- overview
+async function viewOverview() {
+  busy();
+  const s = await api("/api/stats");
+  const env = s.environment || {};
+  const stat = (n, l, h) => el("div", { class: "stat" },
+    el("div", { class: "n" }, num(n)), el("div", { class: "l" }, l),
+    h && el("div", { class: "h" }, h));
+
+  const nodes = [
+    ...head("Overview", "What is in the brain, and what needs your attention."),
+    el("div", { class: "grid g4" },
+      stat(s.papers, "papers", `${num(s.papers_oa)} open access · ${num(s.fulltext)} full text`),
+      stat(s.chunks, "indexed passages", s.embeddings ? `${num(s.embeddings)} embedded` : "keyword + graph"),
+      stat(s.journal, "memories", s.journal_since ? "since " + String(s.journal_since).slice(0, 10) : "none yet"),
+      stat(s.beliefs, "active beliefs", `${s.beliefs_due} due for re-check`),
+      stat(s.entities, "entities", `${num(s.entity_edges)} graph edges`),
+      stat(s.trials, "trials", `${num(s.trial_changes)} status changes`),
+      stat(s.rules, "learned rules", "procedural memory"),
+      stat(s.cards_due, "cards due", `${num(s.cards)} in deck`),
+    ),
+  ];
+
+  if (s.proposals_pending > 0 || s.conflicts_open > 0) {
+    nodes.push(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Needs you"),
+      s.proposals_pending > 0 && el("p", {},
+        `${s.proposals_pending} memory edit(s) awaiting approval. `,
+        el("button", { class: "btn sm primary", onclick: () => go("review") }, "Review")),
+      s.conflicts_open > 0 && el("p", {},
+        `${s.conflicts_open} passage(s) may contradict stored beliefs. `,
+        el("button", { class: "btn sm", onclick: () => go("conflicts") }, "Inspect")),
+    ));
+  }
+
+  nodes.push(el("div", { class: "card" },
+    el("h2", { style: "margin-top:0" }, "This machine"),
+    el("p", { class: "sub", style: "margin:0" }, env.note || ""),
+    el("div", { class: "row", style: "margin-top:8px" },
+      el("span", { class: "pill " + (env.gpu ? "ok" : "") }, env.gpu ? `GPU ${env.vram_gb || "?"} GB` : "CPU only"),
+      el("span", { class: "pill" }, `${(env.installed || []).length}/${env.registered || 0} registered models installed`),
+      el("button", { class: "btn sm", onclick: () => go("models") }, "Model registry"),
+    )));
+
+  const brief = await api("/api/brief");
+  nodes.push(el("div", { class: "card" },
+    el("h2", { style: "margin-top:0" }, "Session brief"),
+    el("p", { class: "sub" }, "Exactly what your agent reads at the start of a session."),
+    el("div", { class: "scroll" }, el("pre", { class: "md" }, brief.markdown || ""))));
+
+  setMain(nodes);
+  refreshBadges(s);
+}
+
+function refreshBadges(s) {
+  const set = (id, n) => { const b = $(id); if (!b) return;
+    b.hidden = !n; b.textContent = n; };
+  set("#b-rev", s.proposals_pending || 0);
+  set("#b-con", s.conflicts_open || 0);
+}
+
+// ----------------------------------------------------------------- search
+let lastQuery = "";
+async function viewSearch() {
+  const input = el("input", { placeholder: "e.g. why is the adjuvant-alone control important?",
+    value: lastQuery, onkeydown: e => { if (e.key === "Enter") run(); } });
+  const kind = el("select", {},
+    el("option", { value: "" }, "everything"),
+    el("option", { value: "paper" }, "papers only"),
+    el("option", { value: "knowledge" }, "my notes only"));
+  const results = el("div", {});
+
+  async function run(mode = "search") {
+    const q = input.value.trim();
+    if (!q) return;
+    lastQuery = q;
+    results.replaceChildren(el("div", { class: "empty" }, el("span", { class: "spin" }), " searching…"));
+    if (mode === "evidence") {
+      const r = await api("/api/evidence", { params: { q } });
+      results.replaceChildren(el("div", { class: "card" },
+        el("div", { class: "scroll" }, el("pre", { class: "md" }, r.markdown || ""))));
+      return;
+    }
+    const r = await api("/api/search", { params: { q, k: 12, kind: kind.value } });
+    if (!r.hits?.length) {
+      results.replaceChildren(el("div", { class: "card" },
+        el("div", { class: "empty" }, "Nothing in the corpus matches."),
+        el("div", { class: "note" },
+          "That is a fact about the corpus, not about the literature. Widen "
+          + "config/interests.yaml, or run a longer sweep.")));
+      return;
+    }
+    const terms = q.toLowerCase().match(/[a-z0-9]{4,}/g) || [];
+    const hl = t => esc(t).replace(new RegExp("(" + terms.map(x =>
+      x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi"), "<mark>$1</mark>");
+    results.replaceChildren(el("div", { class: "card" }, r.hits.map(h =>
+      el("div", { class: "hit" },
+        el("div", { class: "t" }, h.url ? el("a", { href: h.url, target: "_blank", rel: "noopener" }, h.title) : h.title),
+        el("div", { class: "m" },
+          h.citation, " · § ", h.heading || "—", " · ",
+          el("span", { class: "pill acc" }, (h.how || []).join("+")),
+          h.tier !== null && h.tier !== undefined ? " " : "",
+          h.tier !== null && h.tier !== undefined
+            ? el("span", { class: "pill " + (h.tier >= 4 ? "ok" : h.tier <= 1 ? "warn" : "") }, "tier " + h.tier + "/5")
+            : null),
+        el("div", { class: "s", html: hl(h.snippet) })))));
+  }
+
+  setMain([
+    ...head("Search", "Hybrid retrieval: keyword + entity graph" +
+      " (+ vectors when enabled), fused by rank."),
+    el("div", { class: "card" },
+      el("div", { class: "row" }, input, kind,
+        el("button", { class: "btn primary", onclick: () => run() }, "Search"),
+        el("button", { class: "btn", onclick: () => run("evidence") }, "Evidence pack")),
+      el("div", { class: "note" },
+        "“Evidence pack” builds the citable block an agent should answer from — "
+        + "sources, evidence tiers, existing beliefs, and an explicit strength read.")),
+    results,
+  ]);
+  if (lastQuery) run();
+}
+
+// ------------------------------------------------------------------ graph
+const KIND_COLORS = { gene: "#e0724a", hla: "#7c5cd6", cell_line: "#0f8f84",
+  mouse: "#c2810f", tool: "#3b7dd8", assay: "#c2418a", concept: "#5d6773",
+  mutation: "#b42318" };
+
+async function viewGraph() {
+  const input = el("input", { placeholder: "centre on an entity, e.g. CT26 (blank = most mentioned)" });
+  const from = el("input", { placeholder: "from, e.g. CT26" });
+  const to = el("input", { placeholder: "to, e.g. immunodominance" });
+  const canvas = el("canvas");
+  const info = el("div", {});
+  const pathOut = el("div", {});
+
+  async function draw() {
+    const r = await api("/api/graph", { params: { entity: input.value.trim(), limit: 55 } });
+    if (r.error) { info.replaceChildren(el("div", { class: "note warn" }, r.error)); return; }
+    info.replaceChildren(el("div", { class: "legend" },
+      ...Object.entries(KIND_COLORS).map(([k, c]) =>
+        el("span", {}, el("i", { style: `background:${c}` }), k.replace("_", " ")))));
+    layout(canvas, r.nodes, r.edges, r.centre);
+  }
+
+  async function findPath() {
+    if (!from.value.trim() || !to.value.trim()) return;
+    const r = await api("/api/graph-path", { params: { from: from.value.trim(), to: to.value.trim() } });
+    pathOut.replaceChildren(el("div", { class: "card" },
+      el("div", { style: "font-size:17px;font-weight:600;letter-spacing:-.01em" },
+        r.path ? r.path.join("  →  ") : "no path found"),
+      el("div", { class: "note" }, r.note)));
+  }
+
+  setMain([
+    ...head("Entity graph", "Passages connected to a question through the literature's own "
+      + "structure, not through wording. This is what answers multi-hop questions."),
+    el("div", { class: "card" },
+      el("div", { class: "row" }, input,
+        el("button", { class: "btn primary", onclick: draw }, "Show")),
+      canvas, info),
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Find a path"),
+      el("div", { class: "row" }, from, to,
+        el("button", { class: "btn", onclick: findPath }, "Trace")),
+      el("div", { class: "note" },
+        "A co-occurrence path is a lead, not a causal claim: it means these concepts are "
+        + "discussed together through these intermediates.")),
+    pathOut,
+  ]);
+  draw();
+}
+
+/* Minimal force-directed layout. ~60 lines beats a 200KB dependency. */
+function layout(canvas, nodes, edges, centre) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  if (!nodes.length) {
+    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--faint");
+    ctx.font = "14px system-ui"; ctx.textAlign = "center";
+    ctx.fillText("No entities yet — run a sweep, or `neobrain graph --rebuild`.", W / 2, H / 2);
+    return;
+  }
+  const idx = new Map(nodes.map((n, i) => [n.id, i]));
+  const P = nodes.map((n, i) => ({
+    x: W / 2 + Math.cos(i / nodes.length * 6.283) * Math.min(W, H) * 0.32 + (Math.random() - .5) * 30,
+    y: H / 2 + Math.sin(i / nodes.length * 6.283) * Math.min(W, H) * 0.32 + (Math.random() - .5) * 30,
+    vx: 0, vy: 0,
+  }));
+  const E = edges.map(e => ({ a: idx.get(e.a), b: idx.get(e.b), w: e.weight }))
+                 .filter(e => e.a !== undefined && e.b !== undefined);
+  const maxW = Math.max(...E.map(e => e.w), 0.001);
+  const maxM = Math.max(...nodes.map(n => n.n_mentions), 1);
+  const rad = n => 4 + 9 * Math.sqrt(n.n_mentions / maxM);
+
+  for (let step = 0; step < 340; step++) {
+    for (let i = 0; i < P.length; i++) {           // repulsion
+      for (let j = i + 1; j < P.length; j++) {
+        let dx = P[j].x - P[i].x, dy = P[j].y - P[i].y;
+        let d2 = dx * dx + dy * dy || 0.01;
+        const f = 5200 / d2;
+        const d = Math.sqrt(d2);
+        P[i].vx -= f * dx / d; P[i].vy -= f * dy / d;
+        P[j].vx += f * dx / d; P[j].vy += f * dy / d;
+      }
+    }
+    for (const e of E) {                            // attraction
+      const dx = P[e.b].x - P[e.a].x, dy = P[e.b].y - P[e.a].y;
+      const d = Math.hypot(dx, dy) || 0.01;
+      const f = (d - 70) * 0.012 * (0.4 + e.w / maxW);
+      P[e.a].vx += f * dx / d; P[e.a].vy += f * dy / d;
+      P[e.b].vx -= f * dx / d; P[e.b].vy -= f * dy / d;
+    }
+    for (const p of P) {                            // integrate + centre pull
+      p.vx += (W / 2 - p.x) * 0.0016; p.vy += (H / 2 - p.y) * 0.0016;
+      p.x += (p.vx *= 0.82); p.y += (p.vy *= 0.82);
+      p.x = Math.max(24, Math.min(W - 24, p.x));
+      p.y = Math.max(20, Math.min(H - 20, p.y));
+    }
+  }
+
+  const css = getComputedStyle(document.body);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = css.getPropertyValue("--border-strong").trim() || "#ccc";
+  for (const e of E) {
+    ctx.globalAlpha = 0.15 + 0.55 * (e.w / maxW);
+    ctx.lineWidth = 0.5 + 1.8 * (e.w / maxW);
+    ctx.beginPath(); ctx.moveTo(P[e.a].x, P[e.a].y); ctx.lineTo(P[e.b].x, P[e.b].y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Draw every node, then labels in importance order with collision rejection.
+  // A crowded graph where labels overlap into mush is less readable than one
+  // where the minor nodes are simply unlabelled and hoverable.
+  nodes.forEach((n, i) => {
+    const isCentre = centre && n.name.toLowerCase() === centre.toLowerCase();
+    ctx.beginPath(); ctx.arc(P[i].x, P[i].y, rad(n), 0, 6.284);
+    ctx.fillStyle = KIND_COLORS[n.kind] || "#888"; ctx.fill();
+    if (isCentre) {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = css.getPropertyValue("--text").trim() || "#111";
+      ctx.stroke();
+    }
+  });
+
+  const order = nodes.map((n, i) => ({ n, i,
+    key: (centre && n.name.toLowerCase() === centre.toLowerCase()) ? 1e9 : n.n_mentions }))
+    .sort((a, b) => b.key - a.key);
+  const placed = [];
+  ctx.textAlign = "center";
+  for (const { n, i } of order) {
+    const isCentre = centre && n.name.toLowerCase() === centre.toLowerCase();
+    ctx.font = (isCentre ? "600 " : "") + "11px system-ui";
+    const label = n.name.length > 20 ? n.name.slice(0, 19) + "…" : n.name;
+    const w = ctx.measureText(label).width, h = 12;
+    const x = P[i].x, y = P[i].y - rad(n) - 5;
+    const box = { l: x - w / 2 - 2, r: x + w / 2 + 2, t: y - h, b: y + 3 };
+    if (!isCentre && placed.some(p =>
+        box.l < p.r && box.r > p.l && box.t < p.b && box.b > p.t)) continue;
+    placed.push(box);
+    ctx.fillStyle = css.getPropertyValue("--text").trim() || "#111";
+    ctx.fillText(label, x, y);
+  }
+  canvas.title = nodes.length + " entities — unlabelled nodes are lower-mention; "
+    + "centre the graph on one to see its neighbourhood.";
+}
+
+// ---------------------------------------------------------------- journal
+async function viewJournal() {
+  const q = el("input", { placeholder: "search everything ever recorded…",
+    onkeydown: e => { if (e.key === "Enter") load(); } });
+  const text = el("textarea", { placeholder: "What should be remembered permanently?" });
+  const kind = el("select", {}, ...["observation", "correction", "decision", "preference",
+    "result", "question", "error"].map(k => el("option", { value: k }, k)));
+  const imp = el("select", {}, ...[1, 2, 3, 4, 5].map(i =>
+    el("option", { value: i, selected: i === 2 ? "" : null }, "importance " + i)));
+  const list = el("div", {});
+
+  async function load() {
+    const r = await api("/api/journal", { params: { q: q.value.trim(), n: 60 } });
+    const s = r.stats || {};
+    list.replaceChildren(el("div", { class: "card" },
+      el("div", { class: "m", style: "font-size:12px;color:var(--faint);margin-bottom:10px" },
+        `${num(s.total)} entries since ${String(s.since || "").slice(0, 10) || "—"}`),
+      r.entries.length ? r.entries.map(e => el("div", { class: "hit" },
+        el("div", { class: "m" },
+          el("span", { class: "pill" }, e.kind), " ",
+          String(e.at).slice(0, 16).replace("T", " "),
+          e.topic ? " · " + e.topic : "", e.source ? " · " + e.source : ""),
+        el("div", { class: "s", style: "color:var(--text)" }, e.text)))
+        : el("div", { class: "empty" }, "Nothing recorded yet.")));
+  }
+
+  async function save() {
+    if (!text.value.trim()) return;
+    await api("/api/journal", { body: { text: text.value, kind: kind.value,
+      importance: Number(imp.value) } });
+    text.value = ""; load();
+  }
+
+  setMain([
+    ...head("Journal", "Append-only episodic memory. Recorded immediately, "
+      + "and the database itself refuses to edit or delete it."),
+    el("div", { class: "card" },
+      text,
+      el("div", { class: "row", style: "margin-top:9px" }, kind, imp,
+        el("button", { class: "btn primary", onclick: save }, "Remember")),
+      el("div", { class: "note" },
+        "Importance 4+ appears in every future session brief. Entries are records "
+        + "that something was said — they are not authoritative, and are never cited as fact.")),
+    el("div", { class: "card" }, el("div", { class: "row" }, q,
+      el("button", { class: "btn", onclick: load }, "Search"))),
+    list,
+  ]);
+  load();
+}
+
+// ---------------------------------------------------------------- beliefs
+async function viewBeliefs() {
+  busy();
+  const [b, r] = await Promise.all([api("/api/beliefs"), api("/api/rules")]);
+  const historyBox = el("div", {});
+
+  async function showHistory(id) {
+    const h = await api("/api/belief-history", { params: { id } });
+    historyBox.replaceChildren(el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Version history"),
+      h.versions.map(v => el("div", { class: "hit" },
+        el("div", { class: "m" },
+          el("span", { class: "pill " + (v.status === "active" ? "ok" : "") },
+            "v" + (v.version || 1) + " · " + v.status),
+          " asserted ", String(v.asserted_at || v.created_at || "").slice(0, 16).replace("T", " "),
+          v.invalidated_at ? " · invalidated " + String(v.invalidated_at).slice(0, 16).replace("T", " ") : ""),
+        el("div", { class: "s", style: "color:var(--text)" }, v.claim),
+        v.invalidated_reason && el("div", { class: "m" }, "because: " + v.invalidated_reason)))));
+    historyBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  setMain([
+    ...head("Beliefs and rules", "Semantic memory (sourced claims, versioned never overwritten) "
+      + "and procedural memory (how to work, learned from your corrections)."),
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Rules learned from you"),
+      r.rules?.length ? r.rules.map(x => el("div", { class: "hit" },
+        el("div", { class: "t" }, "When ", x.trigger),
+        el("div", { class: "s" }, "→ ", x.action),
+        el("div", { class: "m" }, (x.scope || "general") + " · fired " + (x.fired || 0) + "×")))
+        : el("div", { class: "empty" }, "No rules yet.")),
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, `Active beliefs (${b.beliefs?.length || 0})`),
+      b.beliefs?.length ? b.beliefs.map(x => el("div", { class: "hit" },
+        el("div", { class: "t" }, x.claim),
+        el("div", { class: "m" },
+          el("span", { class: "pill " + (x.confidence === "high" ? "ok" :
+            x.confidence === "contested" ? "warn" : "") }, x.confidence),
+          " · ", x.topic || "untopiced",
+          x.review_on ? " · review " + x.review_on : "",
+          " · sources: ", (x.sources || []).map(s =>
+            s.paper_id || s.citation || s.url || "?").join("; ") || "none",
+          " ", el("button", { class: "btn sm", onclick: () => showHistory(x.id) }, "history"))))
+        : el("div", { class: "empty" }, "No beliefs recorded yet.")),
+    historyBox,
+  ]);
+}
+
+// ----------------------------------------------------------------- review
+async function viewReview() {
+  busy();
+  const r = await api("/api/proposals");
+  const render = list => setMain([
+    ...head("Review", "The approval gate. The agent proposes; nothing enters authoritative "
+      + "memory until you approve the diff."),
+    list.length ? list.map(p => {
+      const note = el("input", { placeholder: "note (optional)" });
+      const box = el("div", { class: "card" },
+        el("div", { class: "row", style: "justify-content:space-between" },
+          el("div", {}, el("span", { class: "pill acc" }, p.kind), " → ", el("b", {}, p.target)),
+          el("span", { class: "m", style: "font-size:12px;color:var(--faint)" },
+            String(p.created_at).slice(0, 16).replace("T", " "))),
+        el("p", { class: "sub", style: "margin:10px 0 4px" }, p.rationale),
+        p.evidence && el("div", { class: "m", style: "font-size:12px;color:var(--faint)" },
+          "evidence: " + p.evidence),
+        el("div", { class: "diff", html: (p.diff || "").split("\n").map(l =>
+          l.startsWith("+") ? `<span class="add">${esc(l)}</span>` :
+          l.startsWith("-") ? `<span class="del">${esc(l)}</span>` : esc(l)).join("\n") }),
+        el("div", { class: "row", style: "margin-top:10px" }, note,
+          el("button", { class: "btn primary", onclick: () => decide(p.id, "apply", note.value) }, "Apply"),
+          el("button", { class: "btn", onclick: () => decide(p.id, "reject", note.value) }, "Reject")));
+      return box;
+    }) : el("div", { class: "card" }, el("div", { class: "empty" }, "Nothing awaiting approval.")),
+  ]);
+
+  async function decide(id, decision, note) {
+    await api("/api/proposals/decide", { body: { id, decision, note } });
+    viewReview();
+    api("/api/stats").then(refreshBadges);
+  }
+  render(r.proposals || []);
+}
+
+// -------------------------------------------------------------- conflicts
+async function viewConflicts(scan) {
+  busy(scan ? "scanning the corpus" : "loading");
+  const r = await api("/api/conflicts", { params: { scan: scan ? 1 : 0 } });
+  setMain([
+    ...head("Conflicts", "Evidence that may contradict what the brain believes."),
+    el("div", { class: "card" },
+      el("div", { class: "row" },
+        el("button", { class: "btn primary", onclick: () => viewConflicts(true) }, "Re-scan corpus")),
+      el("div", { class: "note" },
+        "A deliberately over-sensitive detector — shared entities plus negation cues plus "
+        + "numeric divergence. These are candidates, never verdicts. Dismissing a false "
+        + "positive costs five seconds; a missed contradiction costs a wrong claim in a paper.")),
+    (r.conflicts || []).length ? r.conflicts.map(c => {
+      const box = el("div", { class: "card" },
+        el("div", {}, el("span", { class: "pill warn" }, "against belief"), " ", el("b", {}, c.claim)),
+        el("div", { class: "m", style: "font-size:12.5px;color:var(--faint);margin:8px 0" },
+          "cue: ", c.cue),
+        c.title && el("div", { class: "m", style: "font-size:12.5px" },
+          "in: ", c.url ? el("a", { href: c.url, target: "_blank", rel: "noopener" }, c.title) : c.title,
+          c.evidence_tier !== null && c.evidence_tier !== undefined ? ` (tier ${c.evidence_tier}/5)` : ""),
+        el("div", { class: "s", style: "margin-top:8px;color:var(--muted)" }, c.passage),
+        el("div", { class: "row", style: "margin-top:10px" },
+          el("button", { class: "btn sm primary", onclick: () => resolve(c.id, "resolved") }, "Real — resolved"),
+          el("button", { class: "btn sm", onclick: () => resolve(c.id, "dismissed") }, "False positive")));
+      return box;
+    }) : el("div", { class: "card" }, el("div", { class: "empty" }, "No open conflicts.")),
+  ]);
+  async function resolve(id, status) {
+    await api("/api/conflicts/resolve", { body: { id, status } });
+    viewConflicts(false); api("/api/stats").then(refreshBadges);
+  }
+}
+
+// ----------------------------------------------------------------- models
+async function viewModels() {
+  busy();
+  const r = await api("/api/models");
+  const env = r.environment || {};
+  const rows = (r.models || []).map(m => el("div", { class: "card" },
+    el("div", { class: "row", style: "justify-content:space-between;align-items:flex-start" },
+      el("div", {}, el("b", {}, m.name), " ", el("span", { class: "pill" }, m.task)),
+      el("span", { class: "pill " + (m.available ? "ok" : "") },
+        m.available ? "installed" : "not installed")),
+    el("p", { class: "sub", style: "margin:8px 0" }, m.summary),
+    el("div", { class: "m", style: "font-size:12.5px;color:var(--faint)" },
+      "licence: ", m.license || "?", " · weights: ", m.weights || "?",
+      m.hardware ? " · " + m.hardware : ""),
+    m.use_when && el("div", { class: "note" }, el("b", {}, "Use when: "), m.use_when),
+    m.caveat && el("div", { class: "note warn" }, el("b", {}, "Caveat: "), m.caveat),
+    m.install && !m.available && el("div", { class: "diff" }, m.install)));
+
+  setMain([
+    ...head("Model registry", "What exists for this work, whether you can run it here, "
+      + "and — the part most model lists omit — when not to use it."),
+    el("div", { class: "card" }, el("div", { class: "row" },
+      el("span", { class: "pill " + (env.gpu ? "ok" : "") },
+        env.gpu ? `GPU ${env.vram_gb || "?"} GB` : "CPU only"),
+      el("span", { class: "pill" }, `${(env.installed || []).length} installed`),
+      ...(r.tasks || []).map(t => el("button", { class: "btn sm",
+        onclick: async () => {
+          const rr = await api("/api/models", { params: { task: t } });
+          setMain([...head("Model registry — " + t, rr.guidance || ""),
+            ...(rr.models || []).map(m => el("div", { class: "card" },
+              el("b", {}, m.name), " ", el("span", { class: "pill " + (m.available ? "ok" : "") },
+                m.available ? "installed" : "not installed"),
+              el("p", { class: "sub", style: "margin:8px 0" }, m.summary),
+              m.caveat && el("div", { class: "note warn" }, m.caveat))),
+            el("button", { class: "btn", onclick: viewModels }, "← all models")]);
+        } }, t)))),
+    ...rows,
+  ]);
+}
+
+// ------------------------------------------------------------------ tools
+async function viewTools() {
+  const prot = el("textarea", { placeholder: "Protein sequence (one-letter code)" });
+  const pos = el("input", { type: "number", placeholder: "position (1-based)", value: "12" });
+  const mut = el("input", { placeholder: "mutant residue, e.g. D", value: "D" });
+  const wt = el("input", { placeholder: "expected wild-type (optional, catches isoform mismatch)" });
+  const out1 = el("div", {});
+
+  const eps = el("textarea", { placeholder: "One epitope per line, in construct order" });
+  const linker = el("input", { value: "AAY", placeholder: "linker, e.g. AAY / GPGPG / blank" });
+  const out2 = el("div", {});
+
+  const allele = el("input", { placeholder: "e.g. A*0201 or HLA-DRB1*15:01" });
+  const out3 = el("div", {});
+
+  async function windows() {
+    const r = await api("/api/peptides/windows", { body: {
+      protein: prot.value, position: Number(pos.value), mutant_aa: mut.value,
+      wildtype_aa: wt.value.trim() || null, lengths: [8, 9, 10, 11] } });
+    if (r.error) { out1.replaceChildren(el("div", { class: "note warn" }, r.error)); return; }
+    out1.replaceChildren(el("div", { class: "card" },
+      el("p", { class: "sub" }, `${r.count} peptides containing the mutation, each with its wild-type control.`),
+      el("table", {}, el("tr", {}, ...["mutant", "len", "mut pos", "wild-type", "position type"]
+        .map(h => el("th", {}, h))),
+        ...r.windows.map(w => el("tr", {},
+          el("td", { class: "mono" }, w.peptide),
+          el("td", {}, w.length),
+          el("td", {}, "P" + w.mutation_position),
+          el("td", { class: "mono", style: "color:var(--muted)" }, w.wildtype),
+          el("td", {}, el("span", { class: "pill " + (w.is_anchor ? "warn" : "acc") },
+            w.is_anchor ? "anchor" : "TCR-facing")))))));
+  }
+
+  async function junctions() {
+    const list = eps.value.split("\n").map(s => s.trim()).filter(Boolean);
+    const r = await api("/api/peptides/junctions", { body: { epitopes: list, linker: linker.value } });
+    if (r.error) { out2.replaceChildren(el("div", { class: "note warn" }, r.error)); return; }
+    out2.replaceChildren(el("div", { class: "card" },
+      el("div", { class: "diff" }, r.construct),
+      el("p", { class: "sub", style: "margin-top:10px" },
+        el("b", {}, r.total_novel_peptides + " junction-spanning peptides"),
+        " across " + r.junctions.length + " junctions · linker " + r.linker + " (" + r.linker_note + ")"),
+      el("div", { class: "note warn" }, r.verdict),
+      ...r.junctions.map((j, i) => el("div", { class: "hit" },
+        el("div", { class: "m" }, `junction ${i + 1}: ${j.left} | ${j.linker} | ${j.right} — ${j.n_novel} novel`),
+        el("div", { class: "mono", style: "font-size:12px;color:var(--muted)" },
+          j.novel_peptides.slice(0, 14).join("  ") + (j.n_novel > 14 ? " …" : ""))))));
+  }
+
+  async function checkHla() {
+    const r = await api("/api/hla", { body: { allele: allele.value } });
+    out3.replaceChildren(el("div", { class: "card" },
+      el("div", {}, el("span", { class: "pill " + (r.valid ? "ok" : "bad") },
+        r.valid ? "valid" : "not usable"), " ",
+        el("b", { class: "mono" }, r.normalized || r.input)),
+      r.mhc_class && el("div", { class: "m", style: "margin-top:6px" },
+        "class " + r.mhc_class + (r.resolution ? " · " + r.resolution : "")),
+      r.note && el("div", { class: "note " + (r.valid ? "" : "warn") }, r.note)));
+  }
+
+  setMain([
+    ...head("Peptide tools", "The operations around the models — where an off-by-one "
+      + "silently produces a peptide that does not exist."),
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Mutant peptide windows"),
+      prot,
+      el("div", { class: "row", style: "margin-top:9px" }, pos, mut, wt,
+        el("button", { class: "btn primary", onclick: windows }, "Generate")),
+      el("div", { class: "note" },
+        "Positions are 1-based, as variants are written everywhere in biology. "
+        + "Supplying the expected wild-type residue catches transcript/isoform mismatches, "
+        + "which otherwise produce confident predictions for peptides that do not exist.")),
+    out1,
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Junctional neoepitopes"),
+      eps,
+      el("div", { class: "row", style: "margin-top:9px" }, linker,
+        el("button", { class: "btn primary", onclick: junctions }, "Analyse construct")),
+      el("div", { class: "note" },
+        "String epitopes together and the sequence spanning each junction can itself bind MHC — "
+        + "a peptide present in your vaccine and in no tumor cell. This enumerates them; "
+        + "feed the list to a binding predictor to see which matter.")),
+    out2,
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "HLA allele check"),
+      el("div", { class: "row" }, allele,
+        el("button", { class: "btn primary", onclick: checkHla }, "Normalize")),
+      out3),
+  ]);
+}
+
+// ------------------------------------------------------------------ learn
+async function viewLearn() {
+  busy();
+  const [q, c] = await Promise.all([api("/api/quiz", { params: { n: 30 } }), api("/api/curriculum")]);
+  const area = el("div", {});
+  let i = 0;
+  const cards = q.cards || [];
+
+  function show() {
+    if (i >= cards.length) {
+      area.replaceChildren(el("div", { class: "card" },
+        el("div", { class: "empty" }, "Done for today.")));
+      return;
+    }
+    const card = cards[i];
+    const back = el("div", { hidden: "", class: "s", style: "margin-top:12px;color:var(--text)" }, card.back);
+    const grades = el("div", { class: "row", hidden: "", style: "margin-top:12px" },
+      ...[0, 3, 4, 5].map(g => el("button", {
+        class: "btn sm " + (g >= 4 ? "primary" : ""),
+        onclick: async () => { await api("/api/quiz/grade", { body: { id: card.id, grade: g } });
+          i++; show(); } },
+        ({ 0: "blank", 3: "hard", 4: "good", 5: "easy" })[g])));
+    area.replaceChildren(el("div", { class: "card" },
+      el("div", { class: "m" }, `${i + 1} / ${cards.length} · ${card.topic || "general"}`),
+      el("div", { class: "t", style: "font-size:17px;margin:8px 0" }, card.front),
+      el("button", { class: "btn sm", onclick: e => {
+        back.hidden = false; grades.hidden = false; e.target.remove(); } }, "Show answer"),
+      back, grades));
+  }
+
+  setMain([
+    ...head("Learn", "Spaced repetition over your own corpus, and the curriculum."),
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Due today"),
+      cards.length ? area : el("div", { class: "empty" }, "Nothing due.")),
+    el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, "Curriculum"),
+      el("pre", { class: "md" }, c.markdown || "")),
+  ]);
+  if (cards.length) show();
+}
+
+// ----------------------------------------------------------------- digest
+async function viewDigest() {
+  busy();
+  const r = await api("/api/digest", { params: { n: 3 } });
+  setMain([
+    ...head("Digests", "What each sweep found, newest first."),
+    (r.digests || []).length ? r.digests.map(d => el("div", { class: "card" },
+      el("h2", { style: "margin-top:0" }, d.date),
+      el("div", { class: "scroll" }, el("pre", { class: "md" }, d.markdown))))
+      : el("div", { class: "card" }, el("div", { class: "empty" },
+          "No digests yet — run `neobrain sweep --days 30`.")),
+  ]);
+}
+
+// ------------------------------------------------------------------ router
+const VIEWS = { overview: viewOverview, search: viewSearch, graph: viewGraph,
+  digest: viewDigest, journal: viewJournal, beliefs: viewBeliefs, review: viewReview,
+  conflicts: () => viewConflicts(false), models: viewModels, tools: viewTools, learn: viewLearn };
+
+function go(name) {
+  document.querySelectorAll("nav button[data-v]").forEach(b =>
+    b.classList.toggle("on", b.dataset.v === name));
+  location.hash = name;
+  (VIEWS[name] || viewOverview)();
+}
+document.querySelectorAll("nav button[data-v]").forEach(b =>
+  b.addEventListener("click", () => go(b.dataset.v)));
+window.addEventListener("hashchange", () => go(location.hash.slice(1) || "overview"));
+go(location.hash.slice(1) || "overview");
+api("/api/stats").then(refreshBadges).catch(() => {});
+</script>
+</body>
+</html>
