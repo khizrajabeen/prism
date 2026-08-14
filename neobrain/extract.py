@@ -130,7 +130,8 @@ _CONTROLS = [
     ("irrelevant peptide", r"\birrelevant peptide\b|\bcontrol peptide\b"),
     ("isotype control", r"\bisotype[- ]?(?:matched )?control\b"),
     ("vehicle control", r"\bvehicle(?:[- ]treated)? control\b|\bPBS control\b"),
-    ("untreated control", r"\buntreated control\b|\bnaive control\b"),
+    ("untreated control", r"\buntreated\s+(?:control|animals?|mice|group|arm)\b|"
+                          r"\bnaive\s+(?:control|animals?|mice)\b"),
 ]
 _SEX = [
     # A strain name usually sits between the sex and the animal noun
@@ -166,9 +167,12 @@ _PREDICTOR = [
     ("predictor", r"\b(MixMHC(?:2)?pred[- ]?[\d.]*)\b"),
     ("predictor", r"\b(BigMHC|PRIME|TransPHLA)\b"),
 ]
+_LT = r"(?:[<≤]|below|under|less than|no greater than|at most)"
 _THRESHOLD = [
-    ("binding threshold", r"\b(?:IC50|affinity)\s*[<≤]\s*(\d{2,4})\s*nM"),
-    ("percentile rank", r"\b(?:percentile )?rank\s*[<≤]\s*([\d.]+)\s*%?"),
+    ("binding threshold", rf"\b(?:IC50|affinity)\s*{_LT}\s*(\d{{2,4}})\s*nM"),
+    # "percentile rank below 2%" is as common as "rank < 2%"; requiring the
+    # symbol missed it silently until the eval harness measured recall.
+    ("percentile rank", rf"\b(?:percentile )?rank\s*(?:of\s*)?{_LT}\s*([\d.]+)\s*%?"),
 ]
 _PEPTIDE_LEN = [
     ("peptide length", r"\b(\d{1,2})\s*(?:-|–|\s)?mer(?:s)?\b"),

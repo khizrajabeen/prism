@@ -122,6 +122,14 @@ def cmd_doctor(args) -> int:
     print(f"  CORE.md         ~{core_tokens} tokens (cap {cap}){flag}")
 
     print(f"  network allow   {', '.join(cfg.get('network.allow', []))}")
+
+    # Measured performance, not claimed performance. If these degrade after a
+    # change to extraction or retrieval, this is where you find out.
+    from . import evaluate
+    for line in evaluate.headline():
+        print(f"  {line}")
+    print(_c("  full report: neobrain eval", DIM))
+
     print("\n" + ("All good." if ok else "Fix the MISSING items: pip install -r requirements.txt"))
     return 0 if ok else 1
 
@@ -1077,6 +1085,80 @@ def cmd_score(args) -> int:
     return 0
 
 
+_EVAL_FIELDS = [
+    # flag              gold field             help
+    ("sample-size",     "sample_size",         "n per group, as reported"),
+    ("model-system",    "model_system",        "cell line, strain, or cohort"),
+    ("sex",             "sex",                 "male | female | both"),
+    ("randomization",   "randomization",       "yes if the paper reports it"),
+    ("blinding",        "blinding",            "yes if the paper reports it"),
+    ("power",           "power_calculation",   "yes if a power calculation is reported"),
+    ("controls",        "controls",            "comma-separated control arms"),
+    ("stats",           "statistical_test",    "the named test"),
+    ("correction",      "multiplicity_correction", "yes if multiplicity is corrected"),
+    ("ethics",          "ethics_approval",     "yes if approval is stated"),
+    ("endpoint",        "endpoint",            "the primary readout"),
+    ("route",           "route",               "administration route"),
+    ("adjuvant",        "adjuvant",            "adjuvant or delivery vehicle"),
+    ("predictor",       "predictor",           "binding predictor and version"),
+    ("threshold",       "threshold",           "binding threshold, numeric"),
+    ("peptide-length",  "peptide_length",      "peptide length, numeric"),
+    ("hla",             "hla_alleles",         "comma-separated alleles"),
+]
+
+
+def cmd_eval(args) -> int:
+    from . import evaluate
+
+    if getattr(args, "eval_cmd", None) == "add":
+        fields = {}
+        for flag, key, _help in _EVAL_FIELDS:
+            value = getattr(args, flag.replace("-", "_"), None)
+            if value is not None:
+                fields[key] = value
+        if not fields:
+            print("Nothing to annotate. Pass at least one field, e.g. --sample-size 10.")
+            print(_c("Annotate `no` where the paper genuinely does not report a field — "
+                     "that is what makes absence measurable.", DIM))
+            return 1
+        path = evaluate.add_annotation(
+            args.paper_id, fields, title=args.title or "",
+            relevant_to=[q for q in (args.relevant_to or [])])
+        n = len(evaluate.load_gold())
+        print(f"Annotated {args.paper_id} with {len(fields)} field(s) → {path}")
+        remaining = evaluate.DEFENSIBLE_N - n
+        if remaining > 0:
+            print(_c(f"Gold set: {n} papers. {remaining} more before the numbers are "
+                     f"defensible rather than indicative.", DIM))
+        else:
+            print(_c(f"Gold set: {n} papers — past the {evaluate.DEFENSIBLE_N}-paper "
+                     f"threshold, so the report drops its 'indicative only' flag.", DIM))
+        return 0
+
+    if getattr(args, "eval_cmd", None) == "list":
+        gold = evaluate.load_gold()
+        if not gold:
+            print("No gold set. `neobrain eval add <paper_id> --sample-size ...`")
+            return 0
+        for gp in sorted(gold, key=lambda g: (g.source, g.id)):
+            kind = "annotated" if gp.source == "annotated" else "bootstrap"
+            corpus = "corpus" if gp.paper_id else "inline"
+            print(f"  {gp.id:<16} {kind:<10} {corpus:<7} "
+                  f"{len(gp.fields)} fields · {gp.title[:44]}")
+        n_hand = sum(1 for g in gold if g.source == "annotated")
+        print(f"\n{len(gold)} gold papers, {n_hand} annotated by hand.")
+        return 0
+
+    con = db.connect()
+    result = evaluate.run_all(con)
+    con.close()
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(evaluate.format_report(result))
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from . import mcp_server
 
@@ -1416,6 +1498,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("title")
     p.add_argument("--abstract")
     p.set_defaults(func=cmd_score)
+
+    p = sub.add_parser("eval", help="measure extraction, audit, and retrieval against gold")
+    p.add_argument("--json", action="store_true")
+    es = p.add_subparsers(dest="eval_cmd")
+    e = es.add_parser("add", help="annotate a paper you have read into the gold set")
+    e.add_argument("paper_id", help="a corpus paper id, e.g. MED:39012345")
+    e.add_argument("--title")
+    e.add_argument("--relevant-to", action="append", metavar="QUERY",
+                   help="a query this paper should be retrieved for (repeatable)")
+    for flag, _key, help_text in _EVAL_FIELDS:
+        e.add_argument(f"--{flag}", help=help_text)
+    es.add_parser("list", help="what is in the gold set")
+    p.set_defaults(func=cmd_eval)
 
     p = sub.add_parser("mcp", help="run the MCP server (agent tool interface)")
     p.set_defaults(func=cmd_mcp)

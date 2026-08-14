@@ -1,0 +1,277 @@
+# ---------------------------------------------------------------------------
+# BOOTSTRAP gold set — hand-written methods passages whose ground truth is
+# known by construction, because they were written alongside their annotations.
+#
+# This exists so `neobrain eval` runs on a fresh clone and so the harness has a
+# regression suite. It is NOT a substitute for annotating papers you have
+# actually read: passages written to be extracted are easier than real ones,
+# so these numbers are an optimistic ceiling, and the report says so.
+#
+# To make the numbers mean something, add real papers:
+#
+#     neobrain eval add MED:39012345 \
+#         --sample-size 8 --randomization yes --blinding no \
+#         --power no --controls "vehicle,isotype" --stats "log-rank" --ethics yes
+#
+# Target: 50 papers you have read carefully. Below 20 the harness labels the
+# result indicative rather than defensible.
+#
+# Field values: use `no`/omit for "the paper genuinely does not report this" —
+# that is what lets the harness measure whether absence is detected correctly,
+# which is the property that distinguishes this extractor from an LLM one.
+# ---------------------------------------------------------------------------
+
+papers:
+
+  - id: bs01
+    title: Well-reported therapeutic mouse vaccination study
+    source: bootstrap
+    relevant_to: ["therapeutic neoantigen vaccination in MC38"]
+    text: >
+      Female C57BL/6 mice aged 6-8 weeks were inoculated subcutaneously with
+      5 x 10^5 MC38 cells. Once tumours reached 60 mm3, animals were randomly
+      assigned to groups of n = 10 per group. Tumour volume was measured twice
+      weekly by an investigator blinded to treatment allocation. A power
+      calculation indicated that 10 animals per group gave 80% power to detect
+      a 40% difference in tumour volume. Treatment groups comprised vehicle
+      control, adjuvant-alone, irrelevant peptide with adjuvant, and neoantigen
+      peptide with poly-ICLC. Overall survival was compared using a log-rank
+      test. All procedures were approved by the institutional animal care and
+      use committee.
+    fields:
+      sample_size: 10
+      model_system: MC38
+      sex: female
+      randomization: yes
+      blinding: yes
+      power_calculation: yes
+      controls: "vehicle control, adjuvant-alone arm, irrelevant peptide"
+      statistical_test: "log-rank"
+      ethics_approval: yes
+      endpoint: "overall survival, tumour volume"
+      route: subcutaneous
+      adjuvant: poly-ICLC
+
+  - id: bs02
+    title: Underreported mouse study
+    source: bootstrap
+    text: >
+      Mice bearing B16F10 tumours were vaccinated with a peptide preparation.
+      Tumour growth was recorded over the course of the experiment.
+      Vaccination significantly reduced tumour volume compared with untreated
+      animals.
+    fields:
+      model_system: B16F10
+      effect_direction: decrease
+      endpoint: "tumour volume"
+      controls: "untreated control"
+      # Everything below is genuinely absent — the harness checks we say so.
+      sample_size: no
+      randomization: no
+      blinding: no
+      power_calculation: no
+      statistical_test: no
+      ethics_approval: no
+
+  - id: bs03
+    title: Randomized clinical trial of personalized vaccination
+    source: bootstrap
+    relevant_to: ["randomized trial personalized neoantigen vaccine"]
+    text: >
+      Patients were randomized 1:1 to receive personalized neoantigen
+      vaccination plus pembrolizumab or pembrolizumab alone. A power
+      calculation determined that 120 patients per group were required to
+      provide 80% power. Both male and female patients were enrolled. The
+      primary endpoint was recurrence-free survival, analysed by Cox
+      proportional hazards regression, with Benjamini-Hochberg correction
+      applied across secondary endpoints. The study was approved by the
+      institutional review board at each participating site.
+    fields:
+      sample_size: 120
+      sex: both
+      randomization: yes
+      power_calculation: yes
+      statistical_test: "Cox"
+      multiplicity_correction: yes
+      ethics_approval: yes
+      endpoint: "recurrence-free survival"
+      blinding: no
+      controls: no
+
+  - id: bs04
+    title: Computational pipeline description
+    source: bootstrap
+    relevant_to: ["neoantigen prediction pipeline thresholds"]
+    text: >
+      Somatic variants were called with Mutect2 and annotated with VEP.
+      Class I binding was predicted with NetMHCpan-4.1 for 9-mers, retaining
+      peptides with a percentile rank below 2%. HLA-A*02:01 and HLA-B*07:02
+      were the alleles of interest. Expression was required to exceed 1 TPM.
+    fields:
+      predictor: "NetMHCpan-4.1"
+      threshold: 2
+      peptide_length: 9
+      hla_alleles: "HLA-A*02:01, HLA-B*07:02"
+      sample_size: no
+      randomization: no
+      blinding: no
+      ethics_approval: no
+
+  - id: bs05
+    title: Immunogenicity readout with ELISpot
+    source: bootstrap
+    relevant_to: ["ELISpot immunogenicity readout neoantigen"]
+    text: >
+      Peripheral blood mononuclear cells were stimulated with 25-mer peptides
+      and interferon-gamma responses measured by ELISpot. Each condition was
+      run alongside the matched wild-type peptide and an irrelevant peptide
+      control. Responses were compared with a Mann-Whitney test. Written
+      informed consent was obtained and the protocol was approved by the ethics
+      committee.
+    fields:
+      peptide_length: 25
+      endpoint: "immunogenicity (ELISpot)"
+      controls: "wild-type peptide control, irrelevant peptide"
+      statistical_test: "Mann-Whitney"
+      ethics_approval: yes
+      sample_size: no
+      randomization: no
+      blinding: no
+      power_calculation: no
+
+  - id: bs06
+    title: Orthotopic pancreatic model, partially reported
+    source: bootstrap
+    text: >
+      KPC-derived tumour cells were implanted orthotopically into the pancreas
+      of male C57BL/6 mice. Groups of 8 animals received either vehicle or
+      vaccine intramuscularly. Survival was analysed by Mantel-Cox test.
+    fields:
+      sample_size: 8
+      model_system: "KPC, C57BL/6"
+      sex: male
+      route: intramuscular
+      controls: "vehicle control"
+      statistical_test: "log-rank"
+      randomization: no
+      blinding: no
+      power_calculation: no
+      ethics_approval: no
+
+  - id: bs07
+    title: Humanized mouse study with blinding but no power calculation
+    source: bootstrap
+    text: >
+      NSG mice were reconstituted with human CD34+ cells. Animals were randomly
+      allocated to treatment arms and tumour measurements were taken by a
+      blinded observer. Groups of n = 6 were used. Analysis used two-way ANOVA.
+      Experiments were approved by the institutional animal care and use
+      committee.
+    fields:
+      sample_size: 6
+      model_system: NSG
+      randomization: yes
+      blinding: yes
+      statistical_test: "ANOVA"
+      ethics_approval: yes
+      power_calculation: no
+      controls: no
+
+  - id: bs08
+    title: Immunopeptidomics methods
+    source: bootstrap
+    relevant_to: ["immunopeptidomics HLA immunoprecipitation methods"]
+    text: >
+      HLA class I complexes were immunoprecipitated with W6/32 from 1 x 10^9
+      cells and eluted peptides analysed by LC-MS/MS. Spectra were searched
+      against a personalized proteogenomic database. Identifications were
+      validated with synthetic heavy-labelled peptides.
+    fields:
+      endpoint: "immunogenicity (tetramer)"
+      sample_size: no
+      randomization: no
+      blinding: no
+      power_calculation: no
+      statistical_test: no
+      ethics_approval: no
+      controls: no
+
+  - id: bs09
+    title: Prophylactic challenge study
+    source: bootstrap
+    text: >
+      Mice were vaccinated intradermally on day -14 and challenged with CT26
+      cells on day 0. Ten mice per group were used. Tumour volume was recorded
+      and survival compared by log-rank test. Isotype control antibody was
+      administered to the control arm. Procedures were approved by the ethics
+      committee.
+    fields:
+      sample_size: 10
+      model_system: CT26
+      route: intradermal
+      controls: "isotype control"
+      statistical_test: "log-rank"
+      ethics_approval: yes
+      endpoint: "tumour volume"
+      randomization: no
+      blinding: no
+      power_calculation: no
+
+  - id: bs10
+    title: Trial with response endpoint and correction
+    source: bootstrap
+    text: >
+      Fifty patients were enrolled in this single-arm phase 2 study. The
+      objective response rate was the primary endpoint. Comparisons used
+      Fisher's exact test with Bonferroni correction. The protocol was approved
+      by the institutional review board.
+    fields:
+      sample_size: 50
+      endpoint: "objective response rate"
+      statistical_test: "Fisher/chi-square"
+      multiplicity_correction: yes
+      ethics_approval: yes
+      randomization: no
+      blinding: no
+      power_calculation: no
+      controls: no
+
+  - id: bs11
+    title: mRNA-LNP formulation study
+    source: bootstrap
+    relevant_to: ["mRNA lipid nanoparticle vaccine mouse"]
+    text: >
+      A lipid nanoparticle formulation encoding twenty epitopes was
+      administered intramuscularly to female BALB/c mice, n = 12 per group.
+      Animals were randomised at the point of tumour measurement. Responses
+      were quantified by tetramer staining. Survival was analysed with a
+      log-rank test and the study received institutional animal ethics
+      approval.
+    fields:
+      sample_size: 12
+      model_system: BALB/c
+      sex: female
+      route: intramuscular
+      adjuvant: LNP
+      randomization: yes
+      endpoint: "immunogenicity (tetramer)"
+      statistical_test: "log-rank"
+      ethics_approval: yes
+      blinding: no
+      power_calculation: no
+      controls: no
+
+  - id: bs12
+    title: Minimal abstract-style description
+    source: bootstrap
+    text: >
+      We describe a neoantigen vaccine approach and report encouraging results
+      in a preclinical setting.
+    fields:
+      sample_size: no
+      randomization: no
+      blinding: no
+      power_calculation: no
+      controls: no
+      statistical_test: no
+      ethics_approval: no
